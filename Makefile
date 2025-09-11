@@ -13,14 +13,34 @@ CPPFLAGS     ?=
 LDFLAGS      ?=
 LDLIBS       ?=
 
-# ---- Resolve libbpf via pkg-config (unless provided via config.mk)
-LIBBPF_CFLAGS ?= $(shell $(PKG_CONFIG) --cflags libbpf 2>/dev/null)
-LIBBPF_LIBS   ?= $(shell $(PKG_CONFIG) --libs   libbpf 2>/dev/null)
-CPPFLAGS      += $(LIBBPF_CFLAGS)
-LDLIBS        += $(LIBBPF_LIBS)
+# ---- Prefer in-tree libbpf/bpftool when building inside tools/ (to avoid version mismatches)
+PREFER_INTREE ?= auto
+USE_INTREE    :=
+ifeq ($(PREFER_INTREE),auto)
+  ifneq (,$(wildcard ../lib/bpf/Makefile))
+    USE_INTREE := 1
+  endif
+else ifeq ($(PREFER_INTREE),1)
+  USE_INTREE := 1
+endif
 
-# ---- Resolve bpftool from PATH (or config.mk)
-BPFTOOL_BIN   ?= $(shell command -v bpftool 2>/dev/null)
+ifeq ($(USE_INTREE),1)
+  TOOLS_DIR   := ..
+  LIBBPF_DIR  := $(TOOLS_DIR)/lib/bpf
+  LIBBPF_A    := $(LIBBPF_DIR)/libbpf.a
+  BPFTOOL_DIR := $(TOOLS_DIR)/bpf/bpftool
+  BPFTOOL_BIN := $(BPFTOOL_DIR)/bpftool
+  CPPFLAGS    += -I$(LIBBPF_DIR) -I$(LIBBPF_DIR)/include/uapi -I$(LIBBPF_DIR)/include
+  LDLIBS      += -lelf -lz -lpthread
+else
+  # Resolve libbpf via pkg-config (unless provided via config.mk)
+  LIBBPF_CFLAGS ?= $(shell $(PKG_CONFIG) --cflags libbpf 2>/dev/null)
+  LIBBPF_LIBS   ?= $(shell $(PKG_CONFIG) --libs   libbpf 2>/dev/null)
+  CPPFLAGS      += $(LIBBPF_CFLAGS)
+  LDLIBS        += $(LIBBPF_LIBS)
+  # Resolve bpftool from PATH (or config.mk)
+  BPFTOOL_BIN   ?= $(shell command -v bpftool 2>/dev/null)
+endif
 
 # ---- Our sources/outputs
 USERBIN      := schedscore
@@ -34,16 +54,24 @@ VMLINUX_H    := vmlinux.h
 # Default target
 all: deps $(USERBIN)
 
-# ---- Dependency checks (no in-tree builds). Fail early with clear messages.
-deps:
+# ---- Dependency checks and in-tree fallbacks
+ifeq ($(USE_INTREE),1)
+  deps: $(LIBBPF_A) $(BPFTOOL_BIN)
+  $(LIBBPF_A):
+	$(MAKE) -C $(LIBBPF_DIR)
+  $(BPFTOOL_BIN):
+	$(MAKE) -C $(BPFTOOL_DIR)
+else
+  deps:
 	@if [ -z "$(LIBBPF_LIBS)" ]; then \
 		echo "ERROR: libbpf not found via pkg-config. Install libbpf-dev or run ./configure."; \
 		exit 1; \
-	fi
+		fi
 	@if [ -z "$(BPFTOOL_BIN)" ]; then \
 		echo "ERROR: bpftool not found in PATH. Install bpftool or run ./configure to set BPFTOOL."; \
 		exit 1; \
-	fi
+		fi
+endif
 
 # ---- Generate vmlinux.h from running kernel's BTF (once)
 $(VMLINUX_H): | deps
@@ -54,8 +82,9 @@ $(VMLINUX_H): | deps
 	$(BPFTOOL_BIN) btf dump file /sys/kernel/btf/vmlinux format c > $@
 
 # ---- Build BPF object and skeleton
+BPF_CLANG_FLAGS ?= -O2 -g -target bpf -fno-merge-constants
 $(BPF_O): $(BPF_C) $(VMLINUX_H)
-	$(CLANG) -O2 -g -target bpf $(CPPFLAGS) -c $< -o $@
+	$(CLANG) $(BPF_CLANG_FLAGS) $(CPPFLAGS) -c $< -o $@
 
 $(BPF_SKEL_H): $(BPF_O) | deps
 	$(BPFTOOL_BIN) gen skeleton $< > $@
@@ -64,14 +93,24 @@ $(BPF_SKEL_H): $(BPF_O) | deps
 $(USEROBJ): schedscore.c $(BPF_SKEL_H)
 	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
 
+ifeq ($(USE_INTREE),1)
+$(USERBIN): $(USEROBJ) $(LIBBPF_A)
+	$(CC) $(CFLAGS) $(USEROBJ) $(LIBBPF_A) $(LDFLAGS) $(LDLIBS) -o $@
+else
 $(USERBIN): $(USEROBJ)
 	$(CC) $(CFLAGS) $(USEROBJ) $(LDFLAGS) $(LDLIBS) -o $@
+endif
 
 # Optional static binary (fully static; requires static libc and static libbpf)
 USERBIN_STATIC := schedscore-static
 
+ifeq ($(USE_INTREE),1)
+$(USERBIN_STATIC): $(USEROBJ) $(LIBBPF_A)
+	$(CC) $(CFLAGS) $(USEROBJ) $(LIBBPF_A) $(LDFLAGS) -static $(LDLIBS) -o $@
+else
 $(USERBIN_STATIC): $(USEROBJ)
 	$(CC) $(CFLAGS) $(USEROBJ) $(LDFLAGS) -static $(LDLIBS) -o $@
+endif
 
 # Build a static binary via: make static
 

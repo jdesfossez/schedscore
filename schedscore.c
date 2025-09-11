@@ -564,9 +564,10 @@ static void dump_migrations_summary_table(struct schedscore_bpf *skel)
 			l_l  = st.migr_grid[SC_MR_WAKEUP][SC_ML_LLC]  + st.migr_grid[SC_MR_LB][SC_ML_LLC]  + st.migr_grid[SC_MR_NUMA][SC_ML_LLC];
 			l_x  = st.migr_grid[SC_MR_WAKEUP][SC_ML_XLLC] + st.migr_grid[SC_MR_LB][SC_ML_XLLC] + st.migr_grid[SC_MR_NUMA][SC_ML_XLLC];
 			total = r_w + r_lb + r_n;
-			printf("%-*u | %*llu %*llu %*llu %*llu | %*llu %*llu %*llu\n",
+			printf("%-*u | %*llu %*llu %*llu %*llu | %*llu %*llu %*llu | %*llu %*llu %*llu\n",
 				w_id, next,
 				w_tot, total, w_rw, r_w, w_lb, r_lb, w_n, r_n,
+				w_rw, r_w, w_lb, r_lb, w_n, r_n,
 				w_lc, l_c, w_ll, l_l, w_lx, l_x);
 		}
 		key = next;

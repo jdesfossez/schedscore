@@ -13,6 +13,12 @@ CPPFLAGS     ?=
 LDFLAGS      ?=
 LDLIBS       ?=
 
+# Treat warnings as errors by default to catch issues early
+STRICT ?= 1
+ifeq ($(STRICT),1)
+  CFLAGS += -Werror
+endif
+
 # ---- Prefer in-tree libbpf/bpftool when building inside tools/ (to avoid version mismatches)
 PREFER_INTREE ?= auto
 USE_INTREE    :=
@@ -82,8 +88,11 @@ $(VMLINUX_H): | deps
 	$(BPFTOOL_BIN) btf dump file /sys/kernel/btf/vmlinux format c > $@
 
 # ---- Build BPF object and skeleton
-# Ensure output_table.o builds after skeleton exists
+# Ensure user objects that include the skeleton are built after it exists
 output_table.o: $(BPF_SKEL_H)
+output_csv.o:   $(BPF_SKEL_H)
+output_json.o:  $(BPF_SKEL_H)
+output_dispatch.o: $(BPF_SKEL_H)
 
 BPF_CLANG_FLAGS ?= -O2 -g -target bpf -fno-merge-constants
 $(BPF_O): $(BPF_C) $(VMLINUX_H)
@@ -97,6 +106,12 @@ schedscore.o: schedscore.c $(BPF_SKEL_H)
 	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
 
 output_table.o: output_table.c
+	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
+output_csv.o: output_csv.c
+	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
+output_json.o: output_json.c
+	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
+output_dispatch.o: output_dispatch.c
 	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
 
 ifeq ($(USE_INTREE),1)

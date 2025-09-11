@@ -488,7 +488,7 @@ if require_env "$T29"; then
     OUT=$(mktemp "$TMPDIR/schedscore.$T29.XXXXXX"); trap 'rm -f "$OUT"' EXIT HUP INT TERM
     with_timeout 15 "$SCHEDSCORE" --format table --show-migration-matrix --duration 1 -- true >"$OUT" 2>/dev/null || true
     grep -E -q '^id\s+\|\s+totals\s+\|\s+by_reason\s+\|\s+by_locality' "$OUT" || fail "$T29" "missing migrations summary top header"
-    grep -E -q '^paramset_id\s+\|\s+migr_total\s+migr_wakeup\s+migr_lb\s+migr_numa\s+\|\s+migr_wakeup\s+migr_lb\s+migr_numa\s+\|\s+migr_loc_core\s+migr_loc_llc\s+migr_loc_xllc' "$OUT" || fail "$T29" "missing migrations summary bottom header"
+    grep -E -q '^paramset_id\s+\|\s+total\s+wakeup\s+lb\s+numa\s+\|\s+wakeup\s+lb\s+numa\s+\|\s+smt\s+l2\s+llc\s+xllc\s+xnuma' "$OUT" || fail "$T29" "missing migrations summary bottom header"
     ok "$T29"
 fi
 
@@ -501,6 +501,18 @@ if require_env "$T30"; then
     ok "$T30"
 fi
 
+
+# 31. topology dump headers and summary
+T31="31-topology-dump"
+if require_env "$T31"; then
+    OUT=$(mktemp "$TMPDIR/schedscore.$T31.XXXXXX"); trap 'rm -f "$OUT"' EXIT HUP INT TERM
+    with_timeout 10 "$SCHEDSCORE" --dump-topology >"$OUT" 2>/dev/null || true
+    grep -q '^topology_table$' "$OUT" || fail "$T31" "missing topology_table marker"
+    grep -E -q '^cpu\s+smt\(core_id\)\s+l2_id\s+llc_id\s+numa_id' "$OUT" || fail "$T31" "missing topology header"
+    grep -q '^topology_summary$' "$OUT" || fail "$T31" "missing topology_summary"
+    grep -E -q 'cpus=[0-9]+\s+smt_cores=[0-9]+\s+l2_domains=[0-9]+\s+llc_domains=[0-9]+\s+numa_nodes=[0-9]+' "$OUT" || fail "$T31" "missing summary line"
+    ok "$T31"
+fi
 
 
 exit 0

@@ -158,6 +158,18 @@ clean:
 TEST_SCRIPT := ./test_schedscore.sh
 
 test: all $(TEST_SCRIPT)
+
+# ---- Unit tests for output formatters (snapshot-based, no libbpf)
+.PHONY: unit-test
+UNIT_TESTS := tests/test_output_table tests/test_output_csv tests/test_output_json
+
+unit-test: $(UNIT_TESTS)
+	@for t in $(UNIT_TESTS); do echo "RUN $$t"; ./$$t; done
+
+# simple build rule
+tests/%: tests/%.c output_common.o
+	$(CC) $(CFLAGS) -I. $^ -o $@
+
 	@bash $(TEST_SCRIPT)
 
 .PHONY: all clean deps

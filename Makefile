@@ -44,7 +44,7 @@ endif
 
 # ---- Our sources/outputs
 USERBIN      := schedscore
-USEROBJ      := schedscore.o
+USEROBJ      := schedscore.o emit_helpers.o output_table.o output_csv.o output_json.o output_dispatch.o
 
 BPF_C        := schedscore.bpf.c
 BPF_O        := schedscore.bpf.o
@@ -82,6 +82,9 @@ $(VMLINUX_H): | deps
 	$(BPFTOOL_BIN) btf dump file /sys/kernel/btf/vmlinux format c > $@
 
 # ---- Build BPF object and skeleton
+# Ensure output_table.o builds after skeleton exists
+output_table.o: $(BPF_SKEL_H)
+
 BPF_CLANG_FLAGS ?= -O2 -g -target bpf -fno-merge-constants
 $(BPF_O): $(BPF_C) $(VMLINUX_H)
 	$(CLANG) $(BPF_CLANG_FLAGS) $(CPPFLAGS) -c $< -o $@
@@ -90,7 +93,10 @@ $(BPF_SKEL_H): $(BPF_O) | deps
 	$(BPFTOOL_BIN) gen skeleton $< > $@
 
 # ---- Build userspace
-$(USEROBJ): schedscore.c $(BPF_SKEL_H)
+schedscore.o: schedscore.c $(BPF_SKEL_H)
+	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
+
+output_table.o: output_table.c
 	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
 
 ifeq ($(USE_INTREE),1)

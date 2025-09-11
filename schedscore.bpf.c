@@ -65,6 +65,19 @@ struct {
 } cpu_llc_id SEC(".maps");
 
 struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(max_entries, 4096);
+	__type(key, __u32);
+	__type(value, __u32); // l2_id
+} cpu_l2_id SEC(".maps");
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(max_entries, 4096);
+	__type(key, __u32);
+	__type(value, __u32); // numa_id
+} cpu_numa_id SEC(".maps");
+
+struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__uint(max_entries, 16384);
 	__type(key, __u32);  // pid
@@ -613,11 +626,19 @@ static __always_inline int classify_loc(__u32 from_cpu, __u32 to_cpu)
 	__u32 *from_core = bpf_map_lookup_elem(&cpu_core_id, &from_cpu);
 	__u32 *to_core = bpf_map_lookup_elem(&cpu_core_id, &to_cpu);
 	if (from_core && to_core && *from_core == *to_core)
-		return SC_ML_CORE;
+		return SC_ML_CORE; /* smt */
+	__u32 *from_l2 = bpf_map_lookup_elem(&cpu_l2_id, &from_cpu);
+	__u32 *to_l2 = bpf_map_lookup_elem(&cpu_l2_id, &to_cpu);
+	if (from_l2 && to_l2 && *from_l2 == *to_l2)
+		return SC_ML_L2;
 	__u32 *from_llc = bpf_map_lookup_elem(&cpu_llc_id, &from_cpu);
 	__u32 *to_llc = bpf_map_lookup_elem(&cpu_llc_id, &to_cpu);
 	if (from_llc && to_llc && *from_llc == *to_llc)
 		return SC_ML_LLC;
+	__u32 *from_numa = bpf_map_lookup_elem(&cpu_numa_id, &from_cpu);
+	__u32 *to_numa = bpf_map_lookup_elem(&cpu_numa_id, &to_cpu);
+	if (from_numa && to_numa && *from_numa != *to_numa)
+		return SC_ML_XNUMA;
 	return SC_ML_XLLC;
 }
 

@@ -58,7 +58,8 @@ struct schedscore_paramset_info {
 
 /* schedscore-specific migration enums (avoid kernel collisions) */
 enum sc_migr_reason { SC_MR_WAKEUP, SC_MR_LB, SC_MR_NUMA, SC_MR__COUNT };
-enum sc_migr_loc { SC_ML_CORE, SC_ML_LLC, SC_ML_XLLC, SC_ML__COUNT };
+/* Locality tiers: smt (same core), l2, llc (L3), xllc (other LLC, same NUMA), xnuma (other NUMA) */
+enum sc_migr_loc { SC_ML_CORE, /* smt */ SC_ML_L2, SC_ML_LLC, SC_ML_XLLC, SC_ML_XNUMA, SC_ML__COUNT };
 
 /* Per-PID stats map value */
 struct schedscore_pid_stats {

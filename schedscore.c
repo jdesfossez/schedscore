@@ -172,7 +172,7 @@ static void dump_topology_table(struct schedscore_bpf *skel)
 	}
 	/* Summary */
 	printf("\ntopology_summary\n");
-	__u32 seen_core[4096] = {0}, seen_l2[4096] = {0}, seen_llc[4096] = {0}, seen_numa[4096] = {0};
+	__u32 core_ids[4096], l2_ids[4096], llc_ids[4096], numa_ids[4096];
 	__u32 cores=0,l2s=0,llcs=0,numas=0;
 	for (int cpu = 0; cpu < nproc; cpu++) {
 		__u32 k = cpu; __u32 core=0,l2=0,llc=0,numa=0;
@@ -180,10 +180,10 @@ static void dump_topology_table(struct schedscore_bpf *skel)
 		(void)bpf_map_lookup_elem(l2_fd,   &k, &l2);
 		(void)bpf_map_lookup_elem(llc_fd,  &k, &llc);
 		(void)bpf_map_lookup_elem(numa_fd, &k, &numa);
-		if (!seen_core[core & 0xFFF]) { seen_core[core & 0xFFF]=1; cores++; }
-		if (!seen_l2[l2 & 0xFFF])     { seen_l2[l2 & 0xFFF]=1;     l2s++; }
-		if (!seen_llc[llc & 0xFFF])   { seen_llc[llc & 0xFFF]=1;   llcs++; }
-		if (!seen_numa[numa & 0xFFF]) { seen_numa[numa & 0xFFF]=1; numas++; }
+		bool found=false; for (__u32 i=0;i<cores;i++){ if (core_ids[i]==core){found=true;break;} } if(!found) core_ids[cores++]=core;
+		found=false; for (__u32 i=0;i<l2s;i++){ if (l2_ids[i]==l2){found=true;break;} } if(!found) l2_ids[l2s++]=l2;
+		found=false; for (__u32 i=0;i<llcs;i++){ if (llc_ids[i]==llc){found=true;break;} } if(!found) llc_ids[llcs++]=llc;
+		found=false; for (__u32 i=0;i<numas;i++){ if (numa_ids[i]==numa){found=true;break;} } if(!found) numa_ids[numas++]=numa;
 	}
 	printf("cpus=%ld smt_cores=%u l2_domains=%u llc_domains=%u numa_nodes=%u\n", nproc, cores, l2s, llcs, numas);
 }

@@ -70,7 +70,7 @@ ifeq ($(USE_INTREE),1)
 else
   deps:
 	@if [ -z "$(LIBBPF_LIBS)" ]; then \
-		echo "ERROR: libbpf not found via pkg-config. Install libbpf-dev or run ./configure."; \
+		echo "ERROR: libbpf not found via pkg-config. Install libbpf-dev or run ./configure, or set LIBBPF_CFLAGS/LIBBPF_LIBS."; \
 		exit 1; \
 		fi
 	@if [ -z "$(BPFTOOL_BIN)" ]; then \
@@ -79,13 +79,14 @@ else
 		fi
 endif
 
-# ---- Generate vmlinux.h from running kernel's BTF (once)
+# ---- Generate vmlinux.h from chosen BTF source (default: /sys, overridable)
+VMLINUX_BTF ?= /sys/kernel/btf/vmlinux
 $(VMLINUX_H): | deps
-	@if [ ! -r /sys/kernel/btf/vmlinux ]; then \
-		echo "ERROR: /sys/kernel/btf/vmlinux not found (enable CONFIG_DEBUG_INFO_BTF)"; \
+	@if [ ! -r "$(VMLINUX_BTF)" ]; then \
+		echo "ERROR: $(VMLINUX_BTF) not found (set VMLINUX_BTF to a valid vmlinux or vmlinux.btf)"; \
 		exit 1; \
 	fi
-	$(BPFTOOL_BIN) btf dump file /sys/kernel/btf/vmlinux format c > $@
+	$(BPFTOOL_BIN) btf dump file "$(VMLINUX_BTF)" format c > $@
 
 # ---- Build BPF object and skeleton
 # Ensure user objects that include the skeleton are built after it exists
@@ -150,6 +151,14 @@ USEROBJ_MUSL   := schedscore.musl.o
 USERBIN_MUSL   := schedscore-static-musl
 
 .PHONY: static-musl check-musl
+# ---- Dockerized static builds for distro targets
+.PHONY: dist
+
+# Build static binaries inside Docker for Ubuntu 22.04 and 24.04
+# Requires Docker to be available on host. Artifacts go in dist/<label>/
+dist:
+	@bash scripts/build-static-in-docker.sh ubuntu:22.04 ubuntu:24.04
+
 
 check-musl:
 	@if ! command -v $(MUSL_CC) >/dev/null 2>&1; then \

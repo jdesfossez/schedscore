@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-2.0-only
+
+set -euo pipefail
+# Lightweight configure script for standalone builds
+# Writes config.mk with resolved tool locations/flags when pkg-config is missing
+
+ROOT=$(cd "$(dirname "$0")" && pwd)
+cd "$ROOT"
+
+OUT=config.mk
+: > "$OUT"
+
+PKG_CONFIG=${PKG_CONFIG:-pkg-config}
+
+have_pkg_libbpf() {
+  $PKG_CONFIG --exists libbpf 2>/dev/null
+}
+
+BPFOOL=$(command -v bpftool 2>/dev/null || true)
+if [[ -n "$BPFOOL" ]]; then
+  echo "BPFTOOL_BIN := $BPFOOL" >> "$OUT"
+  echo "Found bpftool at $BPFOOL"
+else
+  echo "# BPFTOOL_BIN not found; set BPFTOOL_BIN=/path/to/bpftool in config.mk" >> "$OUT"
+  echo "bpftool not found in PATH; you can set BPFTOOL_BIN in config.mk"
+fi
+
+if have_pkg_libbpf; then
+  echo "Using pkg-config libbpf"
+else
+  echo "# libbpf not found via pkg-config; set LIBBPF_CFLAGS/LIBBPF_LIBS in config.mk" >> "$OUT"
+  echo "# Example (adjust to your paths):" >> "$OUT"
+  echo "# LIBBPF_CFLAGS := -I\$(PWD)/third_party/libbpf/src -I\$(PWD)/third_party/libbpf/include/uapi -I\$(PWD)/third_party/libbpf/include" >> "$OUT"
+  echo "# LIBBPF_LIBS   := \$(PWD)/third_party/libbpf/src/libbpf.a -lelf -lz -lpthread" >> "$OUT"
+  echo "libbpf not found via pkg-config; you can vendor it and set flags in config.mk"
+fi
+
+echo "Wrote $OUT"
+

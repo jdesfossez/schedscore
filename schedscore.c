@@ -133,22 +133,6 @@ static void usage(const char *prog)
 		"          [--show-hist-config]\n",
 		prog);
 }
-/* Column selection and formatting helpers */
-enum col_id {
-	COL_PID,
-	COL_COMM,
-	COL_PARAMSET_ID,
-	COL_P50_LAT,
-	COL_AVG_LAT,
-	COL_P95_LAT,
-	COL_P99_LAT,
-	COL_P50_ON,
-	COL_AVG_ON,
-	COL_P95_ON,
-	COL_P99_ON,
-	COL_NR_PERIODS,
-	COL__COUNT
-};
 
 static void dump_topology_table(struct schedscore_bpf *skel)
 {
@@ -666,7 +650,6 @@ static int cleanup_and_dump(struct schedscore_bpf *skel, struct sidecar *perf,
 	return output_emit(skel, o);
 }
 
-static int parse_opts(int argc, char **argv, struct opts *o, char ***target_argv);
 static int push_cpu_topology(struct schedscore_bpf *skel);
 
 static void setup_rlimit(void);

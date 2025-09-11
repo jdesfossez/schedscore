@@ -2,8 +2,11 @@
 # SPDX-License-Identifier: GPL-2.0-only
 
 set -euo pipefail
-# Lightweight configure script for standalone builds
-# Writes config.mk with resolved tool locations/flags when pkg-config is missing
+# configure for schedscore
+# - Prefers system libbpf via pkg-config when recent enough
+# - Falls back to vendored static libbpf build on older distros (e.g., Ubuntu 22.04)
+# - Resolves bpftool from PATH or vendors it if missing
+# Writes config.mk with resolved variables
 
 ROOT=$(cd "$(dirname "$0")" && pwd)
 cd "$ROOT"
@@ -12,29 +15,57 @@ OUT=config.mk
 : > "$OUT"
 
 PKG_CONFIG=${PKG_CONFIG:-pkg-config}
+VENDORED_DIR=${VENDORED_DIR:-.vendor}
+LIBBPF_TAG=${LIBBPF_TAG:-v1.3.0}
+FORCE_BUNDLED=${FORCE_BUNDLED:-${USE_VENDORED_LIBBPF:-0}}
 
 have_pkg_libbpf() {
   $PKG_CONFIG --exists libbpf 2>/dev/null
 }
 
-BPFOOL=$(command -v bpftool 2>/dev/null || true)
-if [[ -n "$BPFOOL" ]]; then
+pkg_libbpf_version() {
+  $PKG_CONFIG --modversion libbpf 2>/dev/null || echo 0
+}
+
+version_ge() { # $1 >= $2 ?
+  [ "$(printf '%s\n' "$1" "$2" | sort -V | head -n1)" = "$2" ]
+}
+
+# bpftool
+if BPFOOL=$(command -v bpftool 2>/dev/null || true); then
   echo "BPFTOOL_BIN := $BPFOOL" >> "$OUT"
   echo "Found bpftool at $BPFOOL"
 else
-  echo "# BPFTOOL_BIN not found; set BPFTOOL_BIN=/path/to/bpftool in config.mk" >> "$OUT"
-  echo "bpftool not found in PATH; you can set BPFTOOL_BIN in config.mk"
+  echo "# bpftool not found in PATH; bootstrapping vendored bpftool" >&2
+  eval "$(scripts/bootstrap-bpftool.sh --dest "$VENDORED_DIR")"
+  echo "BPFTOOL_BIN := $BPFTOOL_BIN" >> "$OUT"
+  echo "Vendored bpftool at $BPFTOOL_BIN"
 fi
 
-if have_pkg_libbpf; then
-  echo "Using pkg-config libbpf"
+# libbpf selection
+USE_SYSTEM=0
+if [[ "$FORCE_BUNDLED" != "1" ]] && have_pkg_libbpf; then
+  ver=$(pkg_libbpf_version)
+  echo "Found system libbpf: $ver"
+  if version_ge "$ver" 1.0.0; then
+    USE_SYSTEM=1
+  fi
+fi
+
+if [[ "$USE_SYSTEM" = "1" ]]; then
+  echo "Using system libbpf via pkg-config ($ver)"
+  echo "# Using system libbpf >= 1.0" >> "$OUT"
+  echo "LIBBPF_CFLAGS := $($PKG_CONFIG --cflags libbpf)" >> "$OUT"
+  echo "LIBBPF_LIBS   := $($PKG_CONFIG --libs libbpf)" >> "$OUT"
 else
-  echo "# libbpf not found via pkg-config; set LIBBPF_CFLAGS/LIBBPF_LIBS in config.mk" >> "$OUT"
-  echo "# Example (adjust to your paths):" >> "$OUT"
-  echo "# LIBBPF_CFLAGS := -I\$(PWD)/third_party/libbpf/src -I\$(PWD)/third_party/libbpf/include/uapi -I\$(PWD)/third_party/libbpf/include" >> "$OUT"
-  echo "# LIBBPF_LIBS   := \$(PWD)/third_party/libbpf/src/libbpf.a -lelf -lz -lpthread" >> "$OUT"
-  echo "libbpf not found via pkg-config; you can vendor it and set flags in config.mk"
+  echo "Bootstrapping static libbpf ($LIBBPF_TAG) into $VENDORED_DIR" >&2
+  eval "$(bash scripts/bootstrap-libbpf.sh --tag "$LIBBPF_TAG" --dest "$VENDORED_DIR")"
+  : "${CFLAGS:?bootstrap-libbpf did not output CFLAGS=}"
+  : "${LIBS:?bootstrap-libbpf did not output LIBS=}"
+  echo "# Using vendored static libbpf ($LIBBPF_TAG)" >> "$OUT"
+  echo "PREFER_INTREE := 0" >> "$OUT"
+  echo "LIBBPF_CFLAGS := $CFLAGS" >> "$OUT"
+  echo "LIBBPF_LIBS   := $LIBS" >> "$OUT"
 fi
 
 echo "Wrote $OUT"
-

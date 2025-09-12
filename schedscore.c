@@ -565,11 +565,16 @@ fail:
 static void setup_signals(void)
 {
 	struct sigaction sa;
+	struct sigaction sa_ign = {};
 
 	memset(&sa, 0, sizeof(sa));
 	sa.sa_handler = sig_handler;
 	sigaction(SIGINT, &sa, NULL);
 	sigaction(SIGTERM, &sa, NULL);
+
+	/* Ignore SIGALRM; we don't use it and some targets may set alarms */
+	sa_ign.sa_handler = SIG_IGN;
+	sigaction(SIGALRM, &sa_ign, NULL);
 }
 
 static void run_until_done(pid_t target_pid, int duration_sec)

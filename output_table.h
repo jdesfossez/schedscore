@@ -38,6 +38,8 @@ void dump_paramset_map_table(struct schedscore_bpf *skel, bool resolve_masks);
 void dump_paramset_stats_table(struct schedscore_bpf *skel);
 void dump_pid_migrations_matrix_table(struct schedscore_bpf *skel);
 /* Temporarily keep this external to preserve behavior; will move to its own file or JSON/CVS later */
+void dump_paramset_migrations_matrix_table(struct schedscore_bpf *skel);
+
 void dump_migrations_summary_table(struct schedscore_bpf *skel);
 
 #endif /* SCHEDSCORE_OUTPUT_TABLE_H */

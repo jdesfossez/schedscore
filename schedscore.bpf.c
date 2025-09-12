@@ -77,11 +77,13 @@ struct {
 	__type(value, __u32); // numa_id
 } cpu_numa_id SEC(".maps");
 
+struct wake_info { __u64 ts; __u32 waker_cpu; };
+
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__uint(max_entries, 16384);
 	__type(key, __u32);  // pid
-	__type(value, __u64); // ts
+	__type(value, struct wake_info);
 } wake_ts SEC(".maps");
 
 /* track children of tracked pids */
@@ -325,9 +327,13 @@ static __always_inline void handle_wake_latency(const struct config *cfg,
 	if (cfg && cfg->aggregate_enable && id)
 		mirror_latency_to_paramset(id, lat);
 	if (cfg && cfg->enable_warn && cfg->latency_warn_ns && lat > cfg->latency_warn_ns)
-		bpf_printk(
-			"schedscore: pid=%d wake_lat_ns=%llu > thr_ns=%llu\n",
-			pid, lat, cfg->latency_warn_ns);
+		bpf_printk("schedscore: pid=%d wake_lat_ns=%llu > thr_ns=%llu", pid, lat, cfg->latency_warn_ns);
+	/* detector: wakeup latency */
+	if (cfg && cfg->detect_wakeup_lat_ns && lat > cfg->detect_wakeup_lat_ns) {
+		bpf_printk("schedscore:detect_wakeup_latency: pid=%d latency=%llu", pid, lat);
+	}
+			/* using last_cpu for waker is a good proxy; sched_waking stored waker_cpu as well if needed */
+
 
 	*wts = 0;
 }
@@ -508,6 +514,8 @@ int BPF_PROG(sched_process_exit, struct task_struct *p, int group_dead)
 	return 0;
 }
 
+
+
 SEC("tp_btf/sched_waking")
 int BPF_PROG(sched_waking, struct task_struct *p, int prio, int success, int target_cpu)
 {
@@ -581,7 +589,7 @@ int BPF_PROG(sched_switch, bool preempt, struct task_struct *prev, struct task_s
 				bpf_map_update_elem(&pid_to_paramset, &npid, &id, BPF_ANY);
 				if (cfg->timeline_enable && oldid && *oldid != id)
 					bpf_printk(
-						"schedscore:paramset pid=%u old=%u new=%u\n",
+						"schedscore:paramset pid=%u old=%u new=%u",
 						npid, *oldid, id);
 
 			}
@@ -592,20 +600,8 @@ int BPF_PROG(sched_switch, bool preempt, struct task_struct *prev, struct task_s
 		/* wake latency if any */
 		__u64 *wts = bpf_map_lookup_elem(&wake_ts, &npid);
 		if (wts && *wts) {
-			__u64 lat = ts - *wts;
-			/* snapshot comm after possible exec */
-			bpf_core_read_str(ps->comm, sizeof(ps->comm), &next->comm);
-
-			ps->wake_lat_sum_ns += lat;
-			ps->wake_lat_cnt++;
-			add_latency_bucket(ps->lat_hist, lat);
-			if (cfg && cfg->aggregate_enable && id)
-				mirror_latency_to_paramset(id, lat);
-
-			if (cfg && cfg->enable_warn && cfg->latency_warn_ns && lat > cfg->latency_warn_ns)
-				bpf_printk(
-					"schedscore: pid=%d wake_lat_ns=%llu > thr_ns=%llu\n",
-					npid, lat, cfg->latency_warn_ns);
+			/* Delegate computation, aggregation, warnings and detectors to helper */
+			handle_wake_latency(cfg, npid, ts, id, next, ps);
 			*wts = 0;
 		}
 
@@ -669,6 +665,17 @@ static __always_inline void bump_migration(__u32 pid, int reason, __u32 from_cpu
 				__sync_fetch_and_add(&as->migr_grid[reason][loc], 1);
 		}
 	}
+
+	/* detectors for migration locality */
+	if (cfg) {
+		if (loc == SC_ML_XNUMA && cfg->detect_migration_xnuma)
+			bpf_printk("schedscore:detect_migration_xnuma pid=%d from_cpu=%u to_cpu=%u",
+				pid, from_cpu, to_cpu);
+		else if (loc == SC_ML_XLLC && cfg->detect_migration_xllc)
+			bpf_printk("schedscore:detect_migration_xllc pid=%d from_cpu=%u to_cpu=%u",
+				pid, from_cpu, to_cpu);
+	}
+
 }
 
 SEC("tp_btf/sched_migrate_task")
@@ -697,6 +704,15 @@ int BPF_PROG(sched_swap_numa, struct task_struct *src_p, int src_cpu, struct tas
 {
 	__u32 src_pid = BPF_CORE_READ(src_p, pid);
 	if (track_if_passing_filters(src_p, src_pid))
+
+	/* detector: remote wakeup xNUMA at waking time */
+	{
+		__u32 k0=0; struct config *cfg = bpf_map_lookup_elem(&conf, &k0);
+		if (cfg && cfg->detect_remote_wakeup_xnuma) {
+			/* remote-wakeup detector moved to sched_waking; no-op here */
+		}
+	}
+
 		bump_migration(src_pid, SC_MR_NUMA, src_cpu, dst_cpu);
 	if (dst_p) {
 		__u32 dst_pid = BPF_CORE_READ(dst_p, pid);

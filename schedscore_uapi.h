@@ -30,6 +30,12 @@ struct config {
 	__u8  aggregate_enable;
 	__u8  paramset_recheck;
 	__u8  timeline_enable;
+
+	/* detectors */
+	__u64 detect_wakeup_lat_ns;      /* 0 disables */
+	__u8  detect_migration_xnuma;    /* bool */
+	__u8  detect_migration_xllc;     /* bool */
+	__u8  detect_remote_wakeup_xnuma;/* bool */
 };
 
 /* Exact comm filter key */

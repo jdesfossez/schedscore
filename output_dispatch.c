@@ -201,40 +201,24 @@ static int dump_output(struct schedscore_bpf *skel, const struct opts *o)
         perror("bpf_map_get_next_key");
         return -1;
     }
+
     /* Extra sections */
     if (strcmp(fmt, "csv") == 0) {
         dump_paramsets(skel, true);
         dump_migrations_csv(skel, o->show_migration_matrix);
     } else if (strcmp(fmt, "table") == 0) {
+        /* Per-PID matrix comes immediately after the per-PID main table */
+        dump_pid_migrations_matrix_table(skel);
 
-            /* Per-PID matrix comes immediately after the per-PID main table */
-            if (o->show_migration_matrix && o->show_pid_migration_matrix)
-                dump_pid_migrations_matrix_table(skel);
-
+        /* Paramset map and stats */
         dump_paramset_map_table(skel, true);
         dump_paramset_stats_table(skel);
-        if (o->show_migration_matrix) {
-            /* Paramset migration matrix */
-            printf("\nparamset_migrations_matrix_table\n");
-            int loc_block = 4+1+4+1+4+1+4+1+5;
-            printf("%-12s | %-*s | %-*s | %-*s\n", "paramset_id", loc_block, "wakeup", loc_block, "loadbalance", loc_block, "numa");
-            printf("%-12s | %-4s %-4s %-4s %-4s %-5s | %-4s %-4s %-4s %-4s %-5s | %-4s %-4s %-4s %-4s %-5s\n",
-                "", "smt","l2","llc","xllc","xnuma",  "smt","l2","llc","xllc","xnuma",  "smt","l2","llc","xllc","xnuma");
-            int stats_fd = bpf_map__fd(skel->maps.stats_by_paramset);
-            __u32 k=0,n=0; int err2;
-            while ((err2 = bpf_map_get_next_key(stats_fd, &k, &n)) == 0) {
-                struct schedscore_paramset_stats st;
-                if (bpf_map_lookup_elem(stats_fd, &n, &st) == 0) {
-                    printf("%-12u | %4llu %4llu %4llu %4llu %5llu | %4llu %4llu %4llu %4llu %5llu | %4llu %4llu %4llu %4llu %5llu\n",
-                        n,
-                        st.migr_grid[SC_MR_WAKEUP][SC_ML_CORE], st.migr_grid[SC_MR_WAKEUP][SC_ML_L2],   st.migr_grid[SC_MR_WAKEUP][SC_ML_LLC], st.migr_grid[SC_MR_WAKEUP][SC_ML_XLLC], st.migr_grid[SC_MR_WAKEUP][SC_ML_XNUMA],
-                        st.migr_grid[SC_MR_LB][SC_ML_CORE],     st.migr_grid[SC_MR_LB][SC_ML_L2],     st.migr_grid[SC_MR_LB][SC_ML_LLC],     st.migr_grid[SC_MR_LB][SC_ML_XLLC],     st.migr_grid[SC_MR_LB][SC_ML_XNUMA],
-                        st.migr_grid[SC_MR_NUMA][SC_ML_CORE],   st.migr_grid[SC_MR_NUMA][SC_ML_L2],   st.migr_grid[SC_MR_NUMA][SC_ML_LLC],   st.migr_grid[SC_MR_NUMA][SC_ML_XLLC],   st.migr_grid[SC_MR_NUMA][SC_ML_XNUMA]);
-                }
-                k = n;
-            }
-        }
 
+        /* Paramset migration matrix (by-paramset grid) */
+        if (o->show_migration_matrix)
+            dump_paramset_migrations_matrix_table(skel);
+
+        /* Summary */
         dump_migrations_summary_table(skel);
     }
 
@@ -248,4 +232,3 @@ int output_emit(struct schedscore_bpf *skel, const struct opts *o)
 {
     return dump_output(skel, o);
 }
-

@@ -89,6 +89,12 @@ Common flags
 - --columns ...                  Select table columns (table mode)
 - --user NAME, --env-file PATH   Drop privileges / load env before launching command
 - --                             Separator; everything after is the program to launch and follow
+- Detectors (see DETECTORS.md for details):
+  - --detect-wakeup-latency <ns>
+  - --detect-migration-xnuma
+  - --detect-migration-xllc
+  - --detect-remote-wakeup-xnuma
+
 
 Outputs
 -------

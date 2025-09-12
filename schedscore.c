@@ -82,6 +82,12 @@ struct opts {
 
 	/* behavior */
 	bool follow_children;
+		/* detectors */
+		unsigned long long detect_wakeup_lat_ns; /* 0 disables */
+		bool detect_migration_xnuma;
+		bool detect_migration_xllc;
+		bool detect_remote_wakeup_xnuma;
+
 
 	/* aggregation */
 	bool aggregate_enable;   /* default true */
@@ -108,6 +114,62 @@ static void sig_handler(int signo)
 	(void) signo;
 	exiting = 1;
 }
+
+/* Parse a number with optional unit suffix into nanoseconds. Supports ns, us, ms, s. */
+static unsigned long long parse_time_to_ns(const char *s)
+{
+	char *end = NULL;
+	unsigned long long v = strtoull(s, &end, 10);
+	if (end == s) return 0ULL;
+	if (*end == '\0' || strcmp(end, "ns") == 0) return v;
+	if (strcmp(end, "us") == 0) return v * 1000ULL;
+	if (strcmp(end, "ms") == 0) return v * 1000000ULL;
+	if (strcmp(end, "s") == 0)  return v * 1000000000ULL;
+	return 0ULL; /* invalid suffix */
+}
+
+/* Apply a --detect argument like: wake-lat=1us,xnuma,xllc,remote-wakeup-xnuma */
+static int apply_detect_arg(struct opts *o, const char *arg)
+{
+	char *spec = strdup(arg);
+	char *tok, *saveptr = NULL;
+	int rc = 0;
+	if (!spec) { fprintf(stderr, "oom\n"); return -1; }
+	for (tok = strtok_r(spec, ",", &saveptr); tok; tok = strtok_r(NULL, ",", &saveptr)) {
+		/* trim leading spaces */
+		while (*tok == ' ' || *tok == '\t') tok++;
+		char *eq = strchr(tok, '=');
+		if (eq) {
+			*eq = '\0';
+			const char *key = tok;
+			const char *val = eq + 1;
+			if (strcmp(key, "wake-lat") == 0 || strcmp(key, "wake-latency") == 0) {
+				unsigned long long ns = parse_time_to_ns(val);
+				if (!ns) { fprintf(stderr, "invalid wake-lat value: %s\n", val); rc = -1; break; }
+				o->detect_wakeup_lat_ns = ns;
+			} else {
+				fprintf(stderr, "unknown detector key: %s\n", key); rc = -1; break;
+			}
+		} else {
+			/* boolean detectors */
+			if (strcmp(tok, "xnuma") == 0 || strcmp(tok, "migration-xnuma") == 0)
+				o->detect_migration_xnuma = true;
+			else if (strcmp(tok, "xllc") == 0 || strcmp(tok, "migration-xllc") == 0)
+				o->detect_migration_xllc = true;
+			else if (strcmp(tok, "remote-wakeup-xnuma") == 0 || strcmp(tok, "remote-xnuma") == 0)
+				o->detect_remote_wakeup_xnuma = true;
+			else if (*tok) {
+				fprintf(stderr, "unknown detector: %s\n", tok); rc = -1; break;
+			}
+		}
+	}
+	free(spec);
+	return rc;
+}
+
+static int cpu_in_cpulist(const char *s, int cpu);
+static int detect_numa_id(int cpu, unsigned int *numa_id);
+
 static int cpu_in_cpulist(const char *s, int cpu);
 static int detect_numa_id(int cpu, unsigned int *numa_id);
 
@@ -521,6 +583,8 @@ static int prepare_filters_and_target(struct schedscore_bpf *skel, struct opts *
 	if (o->comm) {
 		if (add_comm_filter(skel, o->comm))
 			fprintf(stderr, "warn: comm filter update failed\n");
+
+
 		cfg->use_comm_filter = 1;
 	}
 	if (o->have_cgroup_id) {
@@ -537,6 +601,13 @@ static int prepare_filters_and_target(struct schedscore_bpf *skel, struct opts *
 	{
 		int mfd = bpf_map__fd(skel->maps.conf);
 		__u32 idx0 = 0;
+
+		/* detectors always set regardless of filters */
+		cfg->detect_wakeup_lat_ns = o->detect_wakeup_lat_ns;
+		cfg->detect_migration_xnuma = o->detect_migration_xnuma ? 1 : 0;
+		cfg->detect_migration_xllc  = o->detect_migration_xllc  ? 1 : 0;
+		cfg->detect_remote_wakeup_xnuma = o->detect_remote_wakeup_xnuma ? 1 : 0;
+
 		if (bpf_map_update_elem(mfd, &idx0, cfg, BPF_ANY)) {
 			perror("config update");
 			return -1;
@@ -678,14 +749,18 @@ static int parse_opts(int argc, char **argv, struct opts *o, char ***target_argv
 		{ "columns",            required_argument, 0, 'C' },
 		{ "show-migration-matrix", no_argument,    0,  6  },
 		{ "show-pid-migration-matrix", no_argument,0,  7  },
+		{ "detect",             required_argument, 0, 'T' },
+		{ "detect-wakeup-latency", required_argument, 0,  9 },
+		{ "detect-migration-xnuma", no_argument, 0, 10 },
+		{ "detect-migration-xllc",  no_argument, 0, 11 },
+		{ "detect-remote-wakeup-xnuma", no_argument, 0, 12 },
 		{ "dump-topology",      no_argument,       0,  8  },
 		{ "no-aggregate",       no_argument,       0,  1  },
 		{ "paramset-recheck",   no_argument,       0,  2  },
 		{ "timeline",           no_argument,       0,  3  },
 		{ "no-resolve-masks",   no_argument,       0,  4  },
 		{ "show-hist-config",   no_argument,       0,  5  },
-		{ "show-migration-matrix", no_argument,    0,  6  },
-		{ 0, 0, 0, 0 }
+		{ 0, 0, 0,  0 }
 	};
 	int c;
 
@@ -702,7 +777,7 @@ static int parse_opts(int argc, char **argv, struct opts *o, char ***target_argv
 		o->show_migration_matrix = false;
 
 
-	while ((c = getopt_long(argc, argv, "d:p:n:g:G:l:wPFA:R:fu:e:o:D:M:C:", long_opts, NULL)) != -1) {
+	while ((c = getopt_long(argc, argv, "d:p:n:g:G:l:wPFA:R:fu:e:o:D:M:C:T:", long_opts, NULL)) != -1) {
 		switch (c) {
 		case 'd': o->duration_sec = atoi(optarg); break;
 		case 'p': o->pid = atoi(optarg); break;
@@ -742,11 +817,25 @@ static int parse_opts(int argc, char **argv, struct opts *o, char ***target_argv
 			o->format = strdup(optarg);
 			if (!o->format) { fprintf(stderr, "oom\n"); return -1; }
 			break;
+		case 'T':
+			if (apply_detect_arg(o, optarg)) return -1;
+			break;
+
 		case 'C':
+
 			o->columns = strdup(optarg);
 			if (!o->columns) { fprintf(stderr, "oom\n"); return -1; }
 			break;
 		case 'A':
+		case 9: {
+			unsigned long long ns = parse_time_to_ns(optarg);
+			if (!ns) { fprintf(stderr, "invalid --detect-wakeup-latency value\n"); return -1; }
+			o->detect_wakeup_lat_ns = ns;
+			break; }
+		case 10: o->detect_migration_xnuma = true; break;
+		case 11: o->detect_migration_xllc  = true; break;
+		case 12: o->detect_remote_wakeup_xnuma = true; break;
+
 			o->perf_args = strdup(optarg);
 			if (!o->perf_args) { fprintf(stderr, "oom\n"); return -1; }
 			break;

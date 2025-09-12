@@ -396,6 +396,45 @@ if require_env "$T21"; then
     ok "$T21"
 fi
 
+# 22a. detector CLI: new consolidated --detect works
+T22A="22a-detect-flag"
+if require_env "$T22A"; then
+    OUT=$(mktemp "$TMPDIR/schedscore.$T22A.XXXXXX"); trap 'rm -f "$OUT"' EXIT HUP INT TERM
+    with_timeout 10 "$SCHEDSCORE" --duration 1 --detect wake-lat=1us,xnuma -- sleep 1 >"$OUT" 2>/dev/null || true
+    # Nothing in main output; this just ensures the flag is accepted without error
+    header_ok "$OUT" || fail "$T22A" "missing header"
+    ok "$T22A"
+fi
+
+# 22b. detector CLI: legacy flags are gone (should fail)
+T22B="22b-detect-legacy-removed"
+if [ -x "$SCHEDSCORE" ]; then
+    if "$SCHEDSCORE" --detect-wakeup-latency 1 --duration 1 -- true >/dev/null 2>&1; then
+        fail "$T22B" "legacy flag still accepted"
+    else
+        ok "$T22B"
+    fi
+fi
+# 22c. --detect accepts units and mixed detectors
+T22C="22c-detect-mixed"
+if require_env "$T22C"; then
+    OUT=$(mktemp "$TMPDIR/schedscore.$T22C.XXXXXX"); trap 'rm -f "$OUT"' EXIT HUP INT TERM
+    with_timeout 10 "$SCHEDSCORE" --duration 1 --detect wake-lat=2ms,remote-wakeup-xnuma -- sleep 1 >"$OUT" 2>/dev/null || true
+    header_ok "$OUT" || fail "$T22C" "missing header"
+    ok "$T22C"
+fi
+
+
+# 22d. legacy detector flags restored and work
+T22D="22d-detect-legacy-restored"
+if require_env "$T22D"; then
+    OUT=$(mktemp "$TMPDIR/schedscore.$T22D.XXXXXX"); trap 'rm -f "$OUT"' EXIT HUP INT TERM
+    with_timeout 10 "$SCHEDSCORE" --duration 1 --detect-wakeup-latency 1us --detect-migration-xnuma -- sleep 1 >"$OUT" 2>/dev/null || true
+    header_ok "$OUT" || fail "$T22D" "missing header"
+    ok "$T22D"
+fi
+
+
 # 22. format=table includes paramset_map_table and paramset_stats_table blocks
 T22="22-table-has-paramset-blocks"
 if require_env "$T22"; then

@@ -749,7 +749,10 @@ static int parse_opts(int argc, char **argv, struct opts *o, char ***target_argv
 		{ "columns",            required_argument, 0, 'C' },
 		{ "show-migration-matrix", no_argument,    0,  6  },
 		{ "show-pid-migration-matrix", no_argument,0,  7  },
-		{ "detect",             required_argument, 0, 'T' },
+		{ "detect-wakeup-latency", required_argument, 0,  9 },
+		{ "detect-migration-xnuma", no_argument, 0, 10 },
+		{ "detect-migration-xllc",  no_argument, 0, 11 },
+		{ "detect-remote-wakeup-xnuma", no_argument, 0, 12 },
 		{ "detect-wakeup-latency", required_argument, 0,  9 },
 		{ "detect-migration-xnuma", no_argument, 0, 10 },
 		{ "detect-migration-xllc",  no_argument, 0, 11 },
@@ -785,6 +788,14 @@ static int parse_opts(int argc, char **argv, struct opts *o, char ***target_argv
 			o->comm = strdup(optarg);
 			if (!o->comm) { fprintf(stderr, "oom\n"); return -1; }
 			break;
+		case 9: {
+			unsigned long long ns = parse_time_to_ns(optarg);
+			if (!ns) { fprintf(stderr, "invalid --detect-wakeup-latency value\n"); return -1; }
+			o->detect_wakeup_lat_ns = ns;
+			break; }
+		case 10: o->detect_migration_xnuma = true; break;
+		case 11: o->detect_migration_xllc  = true; break;
+		case 12: o->detect_remote_wakeup_xnuma = true; break;
 		case 'g':
 			o->cgroup_path = strdup(optarg);
 			if (!o->cgroup_path) { fprintf(stderr, "oom\n"); return -1; }
@@ -817,16 +828,14 @@ static int parse_opts(int argc, char **argv, struct opts *o, char ***target_argv
 			o->format = strdup(optarg);
 			if (!o->format) { fprintf(stderr, "oom\n"); return -1; }
 			break;
-		case 'T':
-			if (apply_detect_arg(o, optarg)) return -1;
-			break;
-
 		case 'C':
-
 			o->columns = strdup(optarg);
 			if (!o->columns) { fprintf(stderr, "oom\n"); return -1; }
 			break;
 		case 'A':
+			o->perf_args = strdup(optarg);
+			if (!o->perf_args) { fprintf(stderr, "oom\n"); return -1; }
+			break;
 		case 9: {
 			unsigned long long ns = parse_time_to_ns(optarg);
 			if (!ns) { fprintf(stderr, "invalid --detect-wakeup-latency value\n"); return -1; }
@@ -835,10 +844,6 @@ static int parse_opts(int argc, char **argv, struct opts *o, char ***target_argv
 		case 10: o->detect_migration_xnuma = true; break;
 		case 11: o->detect_migration_xllc  = true; break;
 		case 12: o->detect_remote_wakeup_xnuma = true; break;
-
-			o->perf_args = strdup(optarg);
-			if (!o->perf_args) { fprintf(stderr, "oom\n"); return -1; }
-			break;
 		case 'R':
 			o->ftrace_args = strdup(optarg);
 			if (!o->ftrace_args) { fprintf(stderr, "oom\n"); return -1; }

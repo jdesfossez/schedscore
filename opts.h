@@ -51,6 +51,13 @@ struct opts {
     bool show_migration_matrix;     /* table mode: show reason×locality grid tables */
     bool show_pid_migration_matrix; /* table mode: per-PID migration matrix */
     bool dump_topology;             /* print detected cpu->(core,l2,llc,numa) */
+
+    /* detectors */
+    unsigned long long detect_wakeup_lat_ns; /* 0 disables */
+    bool detect_migration_xnuma;
+    bool detect_migration_xllc;
+    bool detect_remote_wakeup_xnuma;
+
 };
 
 #endif /* SCHEDSCORE_OPTS_H */

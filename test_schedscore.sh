@@ -513,6 +513,21 @@ if require_env "$T27"; then
 fi
 
 # 28. Paramset migrations matrix header uses pipes
+# 31. --help includes detectors and key flags (concise)
+T31="31-help-concise"
+if require_env "$T31"; then
+    OUT=$(mktemp "$TMPDIR/schedscore.$T31.XXXXXX"); trap 'rm -f "$OUT"' EXIT HUP INT TERM
+    "$SCHEDSCORE" --help >"$OUT" 2>/dev/null || true
+    grep -q -- "--detect-wakeup-latency" "$OUT" || fail "$T31" "missing detect-wakeup-latency"
+    grep -q -- "--detect-migration-xnuma" "$OUT" || fail "$T31" "missing detect-migration-xnuma"
+    grep -q -- "--detect-migration-xllc" "$OUT" || fail "$T31" "missing detect-migration-xllc"
+    grep -q -- "--detect-remote-wakeup-xnuma" "$OUT" || fail "$T31" "missing detect-remote-wakeup-xnuma"
+    grep -q -- "--format" "$OUT" || fail "$T31" "missing format"
+    grep -q -- "--show-migration-matrix" "$OUT" || fail "$T31" "missing show-migration-matrix"
+    grep -q -- "--help" "$OUT" || true
+    ok "$T31"
+fi
+
 T28="28-paramset-matrix-pipes"
 if require_env "$T28"; then
     OUT=$(mktemp "$TMPDIR/schedscore.$T28.XXXXXX"); trap 'rm -f "$OUT"' EXIT HUP INT TERM

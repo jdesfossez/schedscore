@@ -827,8 +827,6 @@ static int open_and_load(struct schedscore_bpf **skel)
 	*skel = schedscore_bpf__open();
 	if (!*skel) {
 		fprintf(stderr, "failed to open BPF skeleton\n");
-
-
 		return -1;
 	}
 	/* hist config is printed in main(), where opts are available */

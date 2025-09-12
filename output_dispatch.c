@@ -15,9 +15,7 @@
 #include "opts.h"
 #include "output_dispatch.h"
 
-
-
-/* Local utilities originally in schedscore.c */
+/* Local utilities originally in schedscore.c. */
 static void dump_paramset_human(struct schedscore_bpf *skel, bool resolve_masks)
 {
     int info_fd = bpf_map__fd(skel->maps.paramset_info);
@@ -99,12 +97,17 @@ static int parse_columns_string(const char *s, struct col_set *out)
     char buf[512];
     if (!s || !*s) { out->cnt = 0; return 0; }
     snprintf(buf, sizeof(buf), "%s", s);
-    char *saveptr = NULL; char *tok = strtok_r(buf, ",", &saveptr);
+    char *saveptr = NULL;
+    char *tok = strtok_r(buf, ",", &saveptr);
     while (tok) {
-        while (*tok == ' ' || *tok == '\t') tok++;
+        while (*tok == ' ' || *tok == '\t')
+            tok++;
         int found = -1;
         for (int i = 0; i < COL__COUNT; i++) {
-            if (strcmp(tok, col_name[i]) == 0) { found = i; break; }
+            if (strcmp(tok, col_name[i]) == 0) {
+                found = i;
+                break;
+            }
         }
         if (found >= 0 && cs.cnt < (int)(sizeof(cs.idx)/sizeof(cs.idx[0])))
             cs.idx[cs.cnt++] = found;

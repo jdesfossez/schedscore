@@ -447,6 +447,8 @@ static void print_hist_config(void)
 static int prepare_filters_and_target(struct schedscore_bpf *skel, struct opts *o,
 				char **target_argv, pid_t *target_pid, struct config *cfg)
 {
+
+
 	/* init cfg */
 	memset(cfg, 0, sizeof(*cfg));
 	if (o->warn_enable) {
@@ -460,14 +462,16 @@ static int prepare_filters_and_target(struct schedscore_bpf *skel, struct opts *
 	cfg->paramset_recheck = o->paramset_recheck ? 1 : 0;
 	cfg->timeline_enable = o->timeline_enable ? 1 : 0;
 
+	int spawned = 0;
+
 	/* Spawn target stopped, wait, add pid filter */
 	if (target_argv) {
 		*target_pid = spawn_target(target_argv);
-
 		if (*target_pid < 0) {
 			fprintf(stderr, "failed to spawn target\n");
 			return -1;
 		}
+		spawned = 1;
 		{
 			int st;
 			pid_t wr = waitpid(*target_pid, &st, WUNTRACED);
@@ -519,6 +523,8 @@ static int prepare_filters_and_target(struct schedscore_bpf *skel, struct opts *
 
 		if (bpf_map_update_elem(mfd, &idx0, cfg, BPF_ANY)) {
 			perror("config update");
+			if (spawned && *target_pid > 0)
+				stop_process(*target_pid);
 			return -1;
 		}
 	}
@@ -538,6 +544,7 @@ static int attach_and_launch(struct schedscore_bpf *skel, pid_t target_pid,
 		if (kill(target_pid, SIGCONT) != 0)
 			perror("kill(SIGCONT target)");
 	}
+	int perf_started = 0;
 	if (o->perf_enable || o->perf_args) {
 		if (!o->perf_args)
 			o->perf_args = strdup("-a -e sched:* -o perf.data");
@@ -546,15 +553,22 @@ static int attach_and_launch(struct schedscore_bpf *skel, pid_t target_pid,
 		perf->pid = spawn_sidecar(perf->exe, o->perf_args);
 		if (perf->pid < 0)
 			return -1;
+		perf_started = 1;
 	}
 	if (o->ftrace_enable || o->ftrace_args) {
 		if (!o->ftrace_args)
 			o->ftrace_args = strdup("-e sched -e irq -e softirq -o trace.dat");
-		if (!o->ftrace_args)
+		if (!o->ftrace_args) {
+			if (perf_started)
+				stop_process(perf->pid);
 			return -1;
+		}
 		trce->pid = spawn_sidecar(trce->exe, o->ftrace_args);
-		if (trce->pid < 0)
+		if (trce->pid < 0) {
+			if (perf_started)
+				stop_process(perf->pid);
 			return -1;
+		}
 	}
 	return 0;
 }

@@ -5,58 +5,58 @@
 #include <stdbool.h>
 
 struct opts {
-    int duration_sec;          /* 0 => run until Ctrl-C */
-    long latency_warn_us;      /* bpf_printk threshold */
-    bool warn_enable;
+	int duration_sec;		/* 0 => run until Ctrl-C */
+	long latency_warn_us;		/* bpf_printk threshold */
+	bool warn_enable;
 
-    /* filters */
-    int pid;
-    char *comm;
-    char *cgroup_path;
-    unsigned long long cgroup_id;
-    bool have_cgroup_id;
+	/* Filters. */
+	int pid;
+	char *comm;
+	char *cgroup_path;
+	unsigned long long cgroup_id;
+	bool have_cgroup_id;
 
-    /* run target as user */
-    char *env_file;            /* env injection file for target */
+	/* Run target as user. */
+	char *env_file;			/* Env injection file for target. */
 
-    /* optional output file/dir */
-    char *out_path;
-    char *out_dir;
+	/* Optional output file/dir. */
+	char *out_path;
+	char *out_dir;
 
-    /* formatting */
-    char *format;    /* csv (default), json, table */
-    char *columns;   /* comma-separated list of columns */
+	/* Formatting. */
+	char *format;			/* csv (default), json, table */
+	char *columns;			/* Comma-separated list of columns. */
 
-    char *run_as_user; /* name or numeric uid string */
+	char *run_as_user;		/* Name or numeric uid string. */
 
-    /* external capture */
-    bool perf_enable;
-    bool ftrace_enable;
-    char *perf_args;
-    char *ftrace_args;
+	/* External capture. */
+	bool perf_enable;
+	bool ftrace_enable;
+	char *perf_args;
+	char *ftrace_args;
 
-    /* behavior */
-    bool follow_children;
+	/* Behavior. */
+	bool follow_children;
 
-    /* aggregation */
-    bool aggregate_enable;   /* default true */
-    bool paramset_recheck;   /* default false */
-    bool timeline_enable;    /* default false */
-    bool resolve_masks;      /* default true (userspace only) */
+	/* Aggregation. */
+	bool aggregate_enable;		/* default true */
+	bool paramset_recheck;		/* default false */
+	bool timeline_enable;		/* default false */
+	bool resolve_masks;		/* default true (userspace only) */
 
-    /* info */
-    bool show_hist_config;
+	/* Info. */
+	bool show_hist_config;
 
-    /* table output options */
-    bool show_migration_matrix;     /* table mode: show reason×locality grid tables */
-    bool show_pid_migration_matrix; /* table mode: per-PID migration matrix */
-    bool dump_topology;             /* print detected cpu->(core,l2,llc,numa) */
+	/* Table output options. */
+	bool show_migration_matrix;	/* paramset/pid migration matrices */
+	bool show_pid_migration_matrix;	/* per-PID migration matrix */
+	bool dump_topology;		/* print cpu->(core,l2,llc,numa) */
 
-    /* detectors */
-    unsigned long long detect_wakeup_lat_ns; /* 0 disables */
-    bool detect_migration_xnuma;
-    bool detect_migration_xllc;
-    bool detect_remote_wakeup_xnuma;
+	/* Detectors. */
+	unsigned long long detect_wakeup_lat_ns; /* 0 disables */
+	bool detect_migration_xnuma;
+	bool detect_migration_xllc;
+	bool detect_remote_wakeup_xnuma;
 
 };
 

@@ -50,7 +50,7 @@ endif
 
 # ---- Our sources/outputs
 USERBIN      := schedscore
-USEROBJ      := schedscore.o emit_helpers.o output_table.o output_csv.o output_json.o output_dispatch.o
+USEROBJ      := schedscore.o emit_helpers.o output_table.o output_csv.o output_json.o output_dispatch.o opts_parse.o topo.o
 
 BPF_C        := schedscore.bpf.c
 BPF_O        := schedscore.bpf.o
@@ -104,6 +104,12 @@ $(BPF_SKEL_H): $(BPF_O) | deps
 
 # ---- Build userspace
 schedscore.o: schedscore.c $(BPF_SKEL_H)
+		$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
+
+opts_parse.o: opts_parse.c opts_parse.h opts.h
+		$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
+
+topo.o: topo.c topo.h $(BPF_SKEL_H)
 	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
 
 output_table.o: output_table.c

@@ -27,13 +27,15 @@
 #include <dirent.h>
 
 #include <bpf/libbpf.h>
-#include <bpf/bpf.h>                 /* <-- syscall wrappers: bpf_map_* */
-#include "schedscore.skel.h"     /* skeleton */
-#include "schedscore_hist.h"      /* shared histogram defines */
-#include "schedscore_uapi.h"      /* shared structs for maps */
+#include <bpf/bpf.h>
+#include "schedscore.skel.h"
+#include "schedscore_hist.h"
+#include "schedscore_uapi.h"
 #include "output_dispatch.h"
 #include "emit_helpers.h"
 #include "opts.h"
+#include "opts_parse.h"
+#include "topo.h"
 
 // Keep in sync with BPF side
 #define TASK_COMM_LEN 16
@@ -60,22 +62,10 @@ static void sig_handler(int signo)
 	exiting = 1;
 }
 
-/* Parse a number with optional unit suffix into nanoseconds. Supports ns, us, ms, s. */
-static unsigned long long parse_time_to_ns(const char *s)
-{
-	char *end = NULL;
-	unsigned long long v = strtoull(s, &end, 10);
-	if (end == s) return 0ULL;
-	if (*end == '\0' || strcmp(end, "ns") == 0) return v;
-	if (strcmp(end, "us") == 0) return v * 1000ULL;
-	if (strcmp(end, "ms") == 0) return v * 1000000ULL;
-	if (strcmp(end, "s") == 0)  return v * 1000000000ULL;
-	return 0ULL; /* invalid suffix */
-}
 
 
-static int cpu_in_cpulist(const char *s, int cpu);
-static int detect_numa_id(int cpu, unsigned int *numa_id);
+
+
 
 static void print_help_aligned(const char *prog);
 
@@ -154,45 +144,6 @@ static void print_help_aligned(const char *prog)
 	printf("  -h, --help                    show this help\n");
 }
 
-static void dump_topology_table(struct schedscore_bpf *skel)
-{
-	int core_fd = bpf_map__fd(skel->maps.cpu_core_id);
-	int l2_fd   = bpf_map__fd(skel->maps.cpu_l2_id);
-	int llc_fd  = bpf_map__fd(skel->maps.cpu_llc_id);
-	int numa_fd = bpf_map__fd(skel->maps.cpu_numa_id);
-	long nproc = sysconf(_SC_NPROCESSORS_CONF);
-	if (nproc <= 0 || nproc > 4096) nproc = 4096;
-	printf("\ntopology_table\n");
-	/* Column widths */
-	int w_cpu=4, w_id=10; /* cpu as %-4d, ids shown as 0x%08x, plus two spaces between */
-	printf("%-*s  %-*s  %-*s  %-*s  %-*s\n",
-		w_cpu, "cpu", w_id, "smt(core_id)", w_id, "l2_id", w_id, "llc_id", w_id, "numa_id");
-	for (int cpu = 0; cpu < nproc; cpu++) {
-		__u32 k = cpu; __u32 core=0,l2=0,llc=0,numa=0;
-		(void)bpf_map_lookup_elem(core_fd, &k, &core);
-		(void)bpf_map_lookup_elem(l2_fd,   &k, &l2);
-		(void)bpf_map_lookup_elem(llc_fd,  &k, &llc);
-		(void)bpf_map_lookup_elem(numa_fd, &k, &numa);
-		printf("%-*d  0x%08x  0x%08x  0x%08x  0x%08x\n",
-			w_cpu, cpu, core, l2, llc, numa);
-	}
-	/* Summary */
-	printf("\ntopology_summary\n");
-	__u32 core_ids[4096], l2_ids[4096], llc_ids[4096], numa_ids[4096];
-	__u32 cores=0,l2s=0,llcs=0,numas=0;
-	for (int cpu = 0; cpu < nproc; cpu++) {
-		__u32 k = cpu; __u32 core=0,l2=0,llc=0,numa=0;
-		(void)bpf_map_lookup_elem(core_fd, &k, &core);
-		(void)bpf_map_lookup_elem(l2_fd,   &k, &l2);
-		(void)bpf_map_lookup_elem(llc_fd,  &k, &llc);
-		(void)bpf_map_lookup_elem(numa_fd, &k, &numa);
-		bool found=false; for (__u32 i=0;i<cores;i++){ if (core_ids[i]==core){found=true;break;} } if(!found) core_ids[cores++]=core;
-		found=false; for (__u32 i=0;i<l2s;i++){ if (l2_ids[i]==l2){found=true;break;} } if(!found) l2_ids[l2s++]=l2;
-		found=false; for (__u32 i=0;i<llcs;i++){ if (llc_ids[i]==llc){found=true;break;} } if(!found) llc_ids[llcs++]=llc;
-		found=false; for (__u32 i=0;i<numas;i++){ if (numa_ids[i]==numa){found=true;break;} } if(!found) numa_ids[numas++]=numa;
-	}
-	printf("cpus=%ld smt_cores=%u l2_domains=%u llc_domains=%u numa_nodes=%u\n", nproc, cores, l2s, llcs, numas);
-}
 
 struct col_set {
 	int idx[32];
@@ -679,140 +630,12 @@ static int cleanup_and_dump(struct schedscore_bpf *skel, struct sidecar *perf,
 	return output_emit(skel, o);
 }
 
-static int push_cpu_topology(struct schedscore_bpf *skel);
+/* moved: push_cpu_topology() is now in topo.c */
 
 static void setup_rlimit(void);
 static int open_and_load(struct schedscore_bpf **skel);
 
-static int parse_opts(int argc, char **argv, struct opts *o, char ***target_argv)
-{
-	static const struct option long_opts[] = {
-		{ "duration",           required_argument, 0, 'd' },
-		{ "pid",                required_argument, 0, 'p' },
-		{ "comm",               required_argument, 0, 'n' },
-		{ "cgroup",             required_argument, 0, 'g' },
-		{ "cgroupid",           required_argument, 0, 'G' },
-		{ "latency-warn-us",    required_argument, 0, 'l' },
-		{ "warn-enable",        no_argument,       0, 'w' },
-		{ "perf",               no_argument,       0, 'P' },
-		{ "ftrace",             no_argument,       0, 'F' },
-		{ "perf-args",          required_argument, 0, 'A' },
-		{ "ftrace-args",        required_argument, 0, 'R' },
-		{ "follow",             no_argument,       0, 'f' },
-		{ "user",               required_argument, 0, 'u' },
-		{ "env-file",           required_argument, 0, 'e' },
-		{ "output",             required_argument, 0, 'o' },
-		{ "out-dir",            required_argument, 0, 'D' },
-		{ "format",             required_argument, 0, 'M' },
-		{ "columns",            required_argument, 0, 'C' },
-		{ "show-migration-matrix", no_argument,    0,  6  },
-		{ "show-pid-migration-matrix", no_argument,0,  7  },
-		{ "detect-wakeup-latency", required_argument, 0,  9 },
-		{ "detect-migration-xnuma", no_argument, 0, 10 },
-		{ "detect-migration-xllc",  no_argument, 0, 11 },
-		{ "detect-remote-wakeup-xnuma", no_argument, 0, 12 },
-		{ "dump-topology",      no_argument,       0,  8  },
-		{ "no-aggregate",       no_argument,       0,  1  },
-		{ "paramset-recheck",   no_argument,       0,  2  },
-		{ "timeline",           no_argument,       0,  3  },
-		{ "no-resolve-masks",   no_argument,       0,  4  },
-		{ "show-hist-config",   no_argument,       0,  5  },
-		{ "help",               no_argument,       0, 'h' },
-		{ 0, 0, 0,  0 }
-	};
-	int c;
-
-	memset(o, 0, sizeof(*o));
-	o->pid = -1;
-	*target_argv = NULL;
-
-	o->aggregate_enable = true;
-	o->paramset_recheck = false;
-	o->show_pid_migration_matrix = false;
-
-	o->timeline_enable = false;
-	o->resolve_masks = true;
-		o->show_migration_matrix = false;
-
-
-	while ((c = getopt_long(argc, argv, "hd:p:n:g:G:l:wPFA:R:fu:e:o:D:M:C:", long_opts, NULL)) != -1) {
-		switch (c) {
-		case 'd': o->duration_sec = atoi(optarg); break;
-		case 'p': o->pid = atoi(optarg); break;
-		case 'n':
-			o->comm = strdup(optarg);
-			if (!o->comm) { fprintf(stderr, "oom\n"); return -1; }
-			break;
-		case 9: {
-			unsigned long long ns = parse_time_to_ns(optarg);
-			if (!ns) { fprintf(stderr, "invalid --detect-wakeup-latency value\n"); return -1; }
-			o->detect_wakeup_lat_ns = ns;
-			break; }
-		case 10: o->detect_migration_xnuma = true; break;
-		case 11: o->detect_migration_xllc  = true; break;
-		case 12: o->detect_remote_wakeup_xnuma = true; break;
-		case 'g':
-			o->cgroup_path = strdup(optarg);
-			if (!o->cgroup_path) { fprintf(stderr, "oom\n"); return -1; }
-			break;
-		case 'G':
-			o->cgroup_id = strtoull(optarg, NULL, 0);
-			o->have_cgroup_id = true;
-			break;
-		case 'l': o->latency_warn_us = atol(optarg); break;
-	case 'w': o->warn_enable = true; break;
-		case 'P': o->perf_enable = true; break;
-		case 'F': o->ftrace_enable = true; break;
-		case 'u':
-			o->run_as_user = strdup(optarg);
-			if (!o->run_as_user) { fprintf(stderr, "oom\n"); return -1; }
-			break;
-		case 'e':
-			o->env_file = strdup(optarg);
-			if (!o->env_file) { fprintf(stderr, "oom\n"); return -1; }
-			break;
-		case 'o':
-			o->out_path = strdup(optarg);
-			if (!o->out_path) { fprintf(stderr, "oom\n"); return -1; }
-			break;
-		case 'D':
-			o->out_dir = strdup(optarg);
-			if (!o->out_dir) { fprintf(stderr, "oom\n"); return -1; }
-			break;
-		case 'M':
-			o->format = strdup(optarg);
-			if (!o->format) { fprintf(stderr, "oom\n"); return -1; }
-			break;
-		case 'C':
-			o->columns = strdup(optarg);
-			if (!o->columns) { fprintf(stderr, "oom\n"); return -1; }
-			break;
-		case 'A':
-			o->perf_args = strdup(optarg);
-			if (!o->perf_args) { fprintf(stderr, "oom\n"); return -1; }
-			break;
-		case 'R':
-			o->ftrace_args = strdup(optarg);
-			if (!o->ftrace_args) { fprintf(stderr, "oom\n"); return -1; }
-			break;
-		case 'f': o->follow_children = true; break;
-		case 1: o->aggregate_enable = false; break;
-		case 2: o->paramset_recheck = true; break;
-		case 3: o->timeline_enable = true; break;
-		case 4: o->resolve_masks = false; break;
-		case 5: o->show_hist_config = true; break;
-		case 6: o->show_migration_matrix = true; break;
-		case 7: o->show_pid_migration_matrix = true; break;
-		case 8: o->dump_topology = true; break;
-		case 'h': return 2; /* help requested */
-		default:
-			return -1;
-		}
-	}
-	if (optind < argc)
-		*target_argv = &argv[optind];
-	return 0;
-}
+/* moved to opts_parse.c */
 
 static void setup_rlimit(void)
 {
@@ -921,134 +744,4 @@ out:
 	return err ? 1 : 0;
 }
 
-static int cpu_in_cpulist(const char *s, int cpu)
-{
-	/* Parse cpulist like "0-3,8,10-11" and check if cpu is in it */
-	const char *p = s;
-	while (*p) {
-		while (*p == ' ' || *p == '\t' || *p == '\n' || *p == ',') p++;
-		if (!*p) break;
-		long a = -1, b = -1; char *endp = NULL;
-		a = strtol(p, &endp, 10);
-		if (endp && *endp == '-') {
-			p = endp + 1;
-			b = strtol(p, &endp, 10);
-			if (a >= 0 && b >= 0 && cpu >= a && cpu <= b) return 1;
-		} else {
-			if (a >= 0 && cpu == a) return 1;
-			p = endp ? endp : p+1;
-		}
-		p = endp ? endp : p;
-	}
-	return 0;
-}
-
-static int detect_numa_id(int cpu, unsigned int *numa_id)
-{
-	/* Try to find node whose cpulist contains this cpu */
-	char path[256]; char buf[4096];
-	for (unsigned int node = 0; node < 1024; node++) {
-		snprintf(path, sizeof(path), "/sys/devices/system/node/node%u/cpulist", node);
-		FILE *f = fopen(path, "r");
-		if (!f) continue;
-		size_t n = fread(buf, 1, sizeof(buf)-1, f);
-		fclose(f);
-		if (n == 0) continue;
-		buf[n] = '\0';
-		if (cpu_in_cpulist(buf, cpu)) { *numa_id = node; return 0; }
-	}
-	return -1;
-}
-
-
-
-static int read_uint_file(const char *path, unsigned int *out)
-{
-	FILE *f = fopen(path, "r");
-	if (!f) return -1;
-	unsigned int v = 0; int rc = fscanf(f, "%u", &v);
-	fclose(f);
-	if (rc == 1) { *out = v; return 0; }
-	return -1;
-}
-
-static int detect_l2_id(int cpu, unsigned int *l2_id)
-{
-	char p[256];
-	unsigned int best_id=0;
-	for (int idx = 0; idx < 10; idx++) {
-		snprintf(p, sizeof(p), "/sys/devices/system/cpu/cpu%d/cache/index%d/type", cpu, idx);
-		FILE *f = fopen(p, "r"); if (!f) continue;
-		char typebuf[32] = {0}; if (!fgets(typebuf, sizeof(typebuf), f)) { fclose(f); continue; }
-		fclose(f);
-		if (!strstr(typebuf, "Unified")) continue;
-		snprintf(p, sizeof(p), "/sys/devices/system/cpu/cpu%d/cache/index%d/level", cpu, idx);
-		unsigned int lvl=0; if (read_uint_file(p, &lvl)) continue;
-		if (lvl == 2) {
-			snprintf(p, sizeof(p), "/sys/devices/system/cpu/cpu%d/cache/index%d/id", cpu, idx);
-			if (read_uint_file(p, &best_id) == 0) { *l2_id = best_id; return 0; }
-		}
-	}
-	return -1;
-}
-
-
-static int detect_llc_highest(int cpu, unsigned int *llc_id)
-{
-	char p[256]; unsigned int best_id = 0, best_lvl = 0;
-	for (int idx = 0; idx < 10; idx++) {
-		snprintf(p, sizeof(p), "/sys/devices/system/cpu/cpu%d/cache/index%d/type", cpu, idx);
-		FILE *f = fopen(p, "r");
-		if (!f)
-			continue;
-		char typebuf[32] = {0}; if (!fgets(typebuf, sizeof(typebuf), f)) { fclose(f); continue; }
-		fclose(f);
-		if (!strstr(typebuf, "Unified")) continue;
-		snprintf(p, sizeof(p), "/sys/devices/system/cpu/cpu%d/cache/index%d/level", cpu, idx);
-		unsigned int lvl=0; if (read_uint_file(p, &lvl)) continue;
-
-		if (lvl >= best_lvl) {
-			snprintf(p, sizeof(p), "/sys/devices/system/cpu/cpu%d/cache/index%d/id", cpu, idx);
-			unsigned int id; if (read_uint_file(p, &id)) continue;
-			best_lvl = lvl; best_id = id;
-		}
-	}
-	if (best_lvl) { *llc_id = best_id; return 0; }
-	return -1;
-}
-
-static int push_cpu_topology(struct schedscore_bpf *skel)
-{
-	long nproc = sysconf(_SC_NPROCESSORS_CONF);
-	if (nproc <= 0 || nproc > 4096) nproc = 4096;
-	int core_fd = bpf_map__fd(skel->maps.cpu_core_id);
-	int llc_fd  = bpf_map__fd(skel->maps.cpu_llc_id);
-	int l2_fd   = bpf_map__fd(skel->maps.cpu_l2_id);
-	int numa_fd = bpf_map__fd(skel->maps.cpu_numa_id);
-	if (core_fd < 0 || llc_fd < 0 || l2_fd < 0 || numa_fd < 0)
-		return -1;
-	for (int cpu = 0; cpu < nproc; cpu++) {
-		char p[256]; unsigned int core_id=0, pkg_id=0, llc_id=0, l2_id=0, core_key=0, numa_id=0;
-		snprintf(p, sizeof(p), "/sys/devices/system/cpu/cpu%d/topology/core_id", cpu);
-		read_uint_file(p, &core_id);
-		snprintf(p, sizeof(p), "/sys/devices/system/cpu/cpu%d/topology/physical_package_id", cpu);
-		read_uint_file(p, &pkg_id);
-		/* combine socket and core to get a globally unique core identity */
-		core_key = (pkg_id << 16) | (core_id & 0xFFFF);
-		if (detect_llc_highest(cpu, &llc_id) != 0)
-			llc_id = (pkg_id << 16); /* fallback: package as LLC cluster */
-		if (detect_l2_id(cpu, &l2_id) != 0)
-			l2_id = core_key; /* fallback: per-core L2 */
-		/* NUMA id via sysfs node mapping; fallback to package if not found */
-		if (detect_numa_id(cpu, &numa_id) != 0) {
-			snprintf(p, sizeof(p), "/sys/devices/system/cpu/cpu%d/topology/physical_package_id", cpu);
-			read_uint_file(p, &numa_id);
-		}
-		__u32 k = cpu;
-		if (bpf_map_update_elem(core_fd, &k, &core_key, BPF_ANY)) perror("cpu_core_id update");
-		if (bpf_map_update_elem(llc_fd,  &k, &llc_id,   BPF_ANY)) perror("cpu_llc_id update");
-		if (bpf_map_update_elem(l2_fd,   &k, &l2_id,    BPF_ANY)) perror("cpu_l2_id update");
-		if (bpf_map_update_elem(numa_fd, &k, &numa_id,  BPF_ANY)) perror("cpu_numa_id update");
-	}
-	return 0;
-}
+/* moved to topo.c */

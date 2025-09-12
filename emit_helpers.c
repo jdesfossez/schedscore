@@ -23,8 +23,10 @@ double quantile_from_hist(const __u32 *hist, int buckets, double q)
 		return 0.0;
 
 
-	if (q < 0.0) q = 0.0;
-	else if (q > 1.0) q = 1.0;
+	if (q < 0.0)
+		q = 0.0;
+	else if (q > 1.0)
+		q = 1.0;
 
 	tgt = (unsigned long)(q * (double)total + 0.5);
 

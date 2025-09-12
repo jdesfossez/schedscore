@@ -28,18 +28,20 @@ int dump_json(struct schedscore_bpf *skel, const struct opts *o)
     int stats_fd = bpf_map__fd(skel->maps.stats_by_paramset);
     int pid_fd = bpf_map__fd(skel->maps.stats);
     int pid2set_fd = bpf_map__fd(skel->maps.pid_to_paramset);
-    __u32 key=0,next=0; int err;
+    __u32 key = 0, next = 0;
+    int err;
     struct schedscore_pid_stats val;
     char cpus[512], mems[512];
     printf("{\n");
     printf("  \"format\": \"json\",\n");
     /* Retain paramset_map for backward compatibility, but details are embedded per-stat */
     printf("  \"paramset_map\": [\n");
-    key = next = 0; int first=1;
+    key = next = 0;
+    int first = 1;
     while ((err = bpf_map_get_next_key(info_fd, &key, &next)) == 0) {
         struct schedscore_paramset_info info;
         if (bpf_map_lookup_elem(info_fd, &next, &info) == 0) {
-            cpus[0]=mems[0]='\0';
+            cpus[0] = mems[0] = '\0';
             mask_to_ranges(info.key.cpus_mask, cpus, sizeof(cpus));
             mask_to_ranges(info.key.mems_mask, mems, sizeof(mems));
             printf("%s    {\"paramset_id\":%u,\"policy\":\"%s\",\"nice\":%d,\"rtprio\":%u,\"dl_runtime_ns\":%llu,\"dl_deadline_ns\":%llu,\"dl_period_ns\":%llu,\"uclamp_min\":%u,\"uclamp_max\":%u,\"cgroup_id\":%llu,\"cpus_ranges\":\"%s\",\"cpus_weight\":%u,\"mems_ranges\":\"%s\",\"mems_weight\":%u}\n",
@@ -59,18 +61,20 @@ int dump_json(struct schedscore_bpf *skel, const struct opts *o)
 
     /* Paramset stats with embedded paramset info */
     printf("  \"paramset_stats\": [\n");
-    key = next = 0; first=1;
+    key = next = 0;
+    first = 1;
     while ((err = bpf_map_get_next_key(stats_fd, &key, &next)) == 0) {
         struct schedscore_paramset_stats st;
         if (bpf_map_lookup_elem(stats_fd, &next, &st) == 0) {
-            double p50=0,p95=0,p99=0,avg_lat=0,avg_on=0;
+            double p50 = 0, p95 = 0, p99 = 0, avg_lat = 0, avg_on = 0;
             compute_metrics(st.lat_hist, st.wake_lat_sum_ns, st.wake_lat_cnt,
                             st.runtime_ns, st.nr_periods,
                             &p50, &p95, &p99, &avg_lat, &avg_on);
-            double p50_on=0,p95_on=0,p99_on=0;
+            double p50_on = 0, p95_on = 0, p99_on = 0;
             compute_oncpu_quantiles(st.on_hist, &p50_on, &p95_on, &p99_on);
             unsigned int cnt = 0; /* pid count */
-            __u32 k=0,n=0,id=0; int er2;
+            __u32 k = 0, n = 0, id = 0;
+            int er2;
             while ((er2 = bpf_map_get_next_key(pid2set_fd, &k, &n)) == 0) {
                 if (bpf_map_lookup_elem(pid2set_fd, &n, &id) == 0 && id == next)
                     cnt++;

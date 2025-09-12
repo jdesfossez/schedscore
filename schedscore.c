@@ -25,7 +25,6 @@
 #include <grp.h>
 #include <limits.h>
 #include <dirent.h>
-#include <fcntl.h>
 
 #include <bpf/libbpf.h>
 #include <bpf/bpf.h>                 /* <-- syscall wrappers: bpf_map_* */

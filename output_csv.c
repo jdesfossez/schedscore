@@ -15,7 +15,8 @@ void dump_paramset_csv(struct schedscore_bpf *skel, bool resolve_masks)
 	int info_fd = bpf_map__fd(skel->maps.paramset_info);
 	int stats_fd = bpf_map__fd(skel->maps.stats_by_paramset);
 	int pid2set_fd = bpf_map__fd(skel->maps.pid_to_paramset);
-	__u32 key = 0, next = 0; int err;
+	__u32 key = 0, next = 0;
+	int err;
 	char cpus[512], mems[512];
 
 	printf("\nparamset_map_csv\n");
@@ -77,7 +78,8 @@ void dump_migrations_csv(struct schedscore_bpf *skel, bool show_migration_matrix
 {
 	int stats_fd = bpf_map__fd(skel->maps.stats_by_paramset);
 	int pid_fd   = bpf_map__fd(skel->maps.stats);
-	__u32 key=0,next=0; int err;
+	__u32 key = 0, next = 0;
+	int err;
 
 	/* Summary by paramset */
 	printf("\nmigrations_summary_csv\n");
@@ -86,7 +88,7 @@ void dump_migrations_csv(struct schedscore_bpf *skel, bool show_migration_matrix
 	while ((err = bpf_map_get_next_key(stats_fd, &key, &next)) == 0) {
 		struct schedscore_paramset_stats st;
 		if (bpf_map_lookup_elem(stats_fd, &next, &st) == 0) {
-			unsigned long long r_w=0,r_lb=0,r_n=0,l_c=0,l_l=0,l_x=0,total=0;
+			unsigned long long r_w = 0, r_lb = 0, r_n = 0, l_c = 0, l_l = 0, l_x = 0, total = 0;
 			r_w  = st.migr_grid[SC_MR_WAKEUP][SC_ML_CORE] + st.migr_grid[SC_MR_WAKEUP][SC_ML_LLC] + st.migr_grid[SC_MR_WAKEUP][SC_ML_XLLC];
 			r_lb = st.migr_grid[SC_MR_LB][SC_ML_CORE]     + st.migr_grid[SC_MR_LB][SC_ML_LLC]     + st.migr_grid[SC_MR_LB][SC_ML_XLLC];
 			r_n  = st.migr_grid[SC_MR_NUMA][SC_ML_CORE]   + st.migr_grid[SC_MR_NUMA][SC_ML_LLC]   + st.migr_grid[SC_MR_NUMA][SC_ML_XLLC];

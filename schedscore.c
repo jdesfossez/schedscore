@@ -34,7 +34,7 @@
 #include "schedscore_uapi.h"      /* shared structs for maps */
 #include "output_dispatch.h"
 #include "emit_helpers.h"
-
+#include "opts.h"
 
 // Keep in sync with BPF side
 #define TASK_COMM_LEN 16
@@ -47,61 +47,7 @@ static const char *g_run_as_user = NULL;
 static int g_saved_stdout = -1, g_saved_stderr = -1;
 
 
-struct opts {
-	int duration_sec;          /* 0 => run until Ctrl-C */
-	long latency_warn_us;      /* bpf_printk threshold */
-	bool warn_enable;
 
-	/* filters */
-	int pid;
-	char *comm;
-	char *cgroup_path;
-	unsigned long long cgroup_id;
-	bool have_cgroup_id;
-
-	/* run target as user */
-	/* env injection file for target */
-	char *env_file;
-
-	/* optional output file (default stdout) */
-	char *out_path;
-	/* optional output directory */
-	char *out_dir;
-
-	/* formatting */
-	char *format;    /* csv (default), json, table */
-	char *columns;   /* comma-separated list of columns */
-
-	char *run_as_user; /* name or numeric uid string */
-
-	/* external capture */
-	bool perf_enable;
-	bool ftrace_enable;
-	char *perf_args;
-	char *ftrace_args;
-
-	/* behavior */
-	bool follow_children;
-		/* detectors */
-		unsigned long long detect_wakeup_lat_ns; /* 0 disables */
-		bool detect_migration_xnuma;
-		bool detect_migration_xllc;
-		bool detect_remote_wakeup_xnuma;
-
-
-	/* aggregation */
-	bool aggregate_enable;   /* default true */
-	bool paramset_recheck;   /* default false */
-	bool timeline_enable;    /* default false */
-	bool resolve_masks;      /* default true (userspace only) */
-	/* info */
-	bool show_hist_config;
-
-	bool show_migration_matrix;     /* table mode: show reason×locality grid tables */
-	bool show_pid_migration_matrix; /* table mode: per-PID migration matrix */
-	bool dump_topology;             /* print detected cpu->(core,l2,llc,numa) */
-
-};
 
 struct sidecar {
 	const char *exe;

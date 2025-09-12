@@ -37,18 +37,12 @@
 #include "opts_parse.h"
 #include "topo.h"
 
-// Keep in sync with BPF side
-#define TASK_COMM_LEN 16
-
 static volatile sig_atomic_t exiting;
 
 /* Cached settings passed from parent to child */
 static const char *g_env_file = NULL;
 static const char *g_run_as_user = NULL;
 static int g_saved_stdout = -1, g_saved_stderr = -1;
-
-
-
 
 struct sidecar {
 	const char *exe;
@@ -61,55 +55,6 @@ static void sig_handler(int signo)
 	(void) signo;
 	exiting = 1;
 }
-
-
-
-
-
-
-static void print_help_aligned(const char *prog);
-
-
-
-
-
-#if 0
-
-static void usage(const char *prog)
-{
-	print_help_aligned(prog);
-	return;
-	/* cleaned concise help */
-#if 0
-
-
-	print_help_aligned(prog);
-	return;
-
-		"Usage: %s [--duration SEC] [--pid PID] [--comm NAME]\n"
-		"          [--cgroup PATH | --cgroupid ID]\n"
-		"          [--latency-warn-us N] [--warn-enable]\n"
-		"          [--perf] [--ftrace] [--perf-args 'ARGS'] [--ftrace-args 'ARGS']\n"
-		"          [-f]  # follow children like strace\n"
-		"          [-u USER]  # run target command as user/uid\n"
-		"          [--env-file FILE]  # file with KEY=VALUE lines to add to target env\n"
-		"          [-o FILE]         # write all output to FILE (not stdout)\n"
-		"          [--out-dir DIR]   # write multiple outputs under DIR\n"
-			"          [--show-migration-matrix]  # add paramset/pid migration matrices\n"
-		"          [--format csv|json|table]  # output format (default: table)\n"
-			"          [--dump-topology]         # print cpu->(smt,l2,llc,numa) map and exit\n"
-
-#endif
-
-
-		"          [--columns COL1,COL2,...]  # select/reorder columns\n"
-		"          [--show-hist-config]\n",
-		prog);
-/* legacy verbose usage block end */
-
-}
-#endif /* disable legacy usage() */
-
 
 static void print_help_aligned(const char *prog)
 {
@@ -143,12 +88,6 @@ static void print_help_aligned(const char *prog)
 	printf("  --dump-topology               print cpu->(smt,l2,llc,numa) and exit\n");
 	printf("  -h, --help                    show this help\n");
 }
-
-
-struct col_set {
-	int idx[32];
-	int cnt;
-};
 
 static int add_pid_filter(struct schedscore_bpf *skel, int pid)
 {
@@ -189,6 +128,7 @@ static int mark_tracked_pid(struct schedscore_bpf *skel, __u32 pid)
 {
 	__u8 one = 1;
 	int fd = bpf_map__fd(skel->maps.tracked);
+
 	if (pid <= 0)
 		return 0;
 	if (fd < 0)
@@ -218,16 +158,27 @@ static int add_cgroup_filter_id(struct schedscore_bpf *skel, unsigned long long 
 
 static int setup_output_file(const char *path)
 {
-	/* Save console fds for child exec */
-	if (g_saved_stdout < 0) g_saved_stdout = dup(STDOUT_FILENO);
-	if (g_saved_stderr < 0) g_saved_stderr = dup(STDERR_FILENO);
 	int fd = open(path, O_CREAT|O_TRUNC|O_WRONLY, 0644);
+
+	/* Save console fds for child exec */
+	if (g_saved_stdout < 0)
+		g_saved_stdout = dup(STDOUT_FILENO);
+	if (g_saved_stderr < 0)
+		g_saved_stderr = dup(STDERR_FILENO);
 	if (fd < 0) {
 		perror("open -o file");
 		return -1;
 	}
-	if (dup2(fd, STDOUT_FILENO) < 0) { perror("dup2 stdout"); close(fd); return -1; }
-	if (dup2(fd, STDERR_FILENO) < 0) { perror("dup2 stderr"); close(fd); return -1; }
+	if (dup2(fd, STDOUT_FILENO) < 0) {
+		perror("dup2 stdout");
+		close(fd);
+		return -1;
+	}
+	if (dup2(fd, STDERR_FILENO) < 0) {
+		perror("dup2 stderr");
+		close(fd);
+		return -1;
+	}
 	close(fd);
 	return 0;
 }
@@ -259,13 +210,12 @@ static int add_cgroup_filter_path(struct schedscore_bpf *skel, const char *path)
 	}
 
 	fprintf(stderr,
-		"NOTE: --cgroup PATH used; mapping path->id via inode (%llu). "
-		"For exact matching use --cgroupid.\n",
-		(unsigned long long)cgid);
+			"NOTE: --cgroup PATH used; mapping path->id via inode (%llu). "
+			"For exact matching use --cgroupid.\n",
+			(unsigned long long)cgid);
 
 	return 0;
 }
-
 
 /* spawn sidecar via /bin/sh -c for arg string */
 static pid_t spawn_sidecar(const char *exe, const char *args)
@@ -279,16 +229,17 @@ static pid_t spawn_sidecar(const char *exe, const char *args)
 		if (args && *args) {
 			size_t len = strlen(exe) + 1 + strlen(args) + 1;
 			char *cmd = malloc(len);
+
 			if (!cmd)
 				_exit(127);
 			snprintf(cmd, len, "%s %s", exe, args);
-			(void)execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
+			(void) execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
 			/* If execl returns, preserve errno then free */
 			int saved = errno;
 			free(cmd);
 			errno = saved;
 		} else {
-			(void)execlp(exe, exe, (char *)NULL);
+			(void) execlp(exe, exe, (char *)NULL);
 		}
 		perror("exec sidecar");
 		_exit(127);
@@ -299,16 +250,28 @@ static pid_t spawn_sidecar(const char *exe, const char *args)
 static void apply_env_file(const char *path)
 {
 	FILE *f = fopen(path, "re");
-	if (!f) return;
-	char *line = NULL; size_t n = 0;
+	char *line = NULL;
+	size_t n = 0;
+
+	if (!f)
+		return;
+
 	while (getline(&line, &n, f) > 0) {
 		/* trim */
-		char *s = line; while (*s == ' ' || *s == '\t') s++;
-		if (*s == '#' || *s == '\n' || *s == '\0') continue;
-		char *nl = strchr(s, '\n'); if (nl) *nl = '\0';
+		char *s = line;
+		while (*s == ' ' || *s == '\t')
+			s++;
+		if (*s == '#' || *s == '\n' || *s == '\0')
+			continue;
+		char *nl = strchr(s, '\n');
+		if (nl)
+			*nl = '\0';
 		char *eq = strchr(s, '=');
-		if (!eq) continue;
-		*eq = '\0'; char *key = s; char *val = eq + 1;
+		if (!eq)
+			continue;
+		*eq = '\0';
+		char *key = s;
+		char *val = eq + 1;
 		/* overwrite existing vars to match docker --env-file semantics */
 		setenv(key, val, 1);
 	}
@@ -320,10 +283,18 @@ static int drop_to_user_and_env(const char *user_str)
 {
 	struct passwd pw, *res = NULL;
 	char buf[4096];
-	uid_t uid = (uid_t)-1; gid_t gid = (gid_t)-1;
-	int is_numeric = 1; for (const char *p = user_str; *p; p++) { if (*p < '0' || *p > '9') { is_numeric = 0; break; } }
+	uid_t uid = (uid_t) - 1;
+	gid_t gid = (gid_t) - 1;
+	int is_numeric = 1;
+
+	for (const char *p = user_str; *p; p++) {
+		if (*p < '0' || *p > '9') {
+			is_numeric = 0;
+			break;
+		}
+	}
 	if (is_numeric) {
-		uid = (uid_t)strtoul(user_str, NULL, 10);
+		uid = (uid_t) strtoul(user_str, NULL, 10);
 		if (getpwuid_r(uid, &pw, buf, sizeof(buf), &res) == 0 && res) {
 			gid = pw.pw_gid;
 		} else {
@@ -337,10 +308,10 @@ static int drop_to_user_and_env(const char *user_str)
 	}
 	if (res) {
 		/* set env before dropping privileges to avoid surprises with restricted env */
-		setenv("HOME",   pw.pw_dir ? pw.pw_dir : "", 1);
-		setenv("SHELL",  pw.pw_shell ? pw.pw_shell : "/bin/sh", 1);
-		setenv("USER",   pw.pw_name ? pw.pw_name : "", 1);
-		setenv("LOGNAME",pw.pw_name ? pw.pw_name : "", 1);
+		setenv("HOME", pw.pw_dir ? pw.pw_dir : "", 1);
+		setenv("SHELL", pw.pw_shell ? pw.pw_shell : "/bin/sh", 1);
+		setenv("USER", pw.pw_name ? pw.pw_name : "", 1);
+		setenv("LOGNAME", pw.pw_name ? pw.pw_name : "", 1);
 	}
 	/* apply env file (if provided via --env-file) before dropping privs */
 	if (g_env_file && *g_env_file)
@@ -372,8 +343,10 @@ static pid_t spawn_target(char *const argv[])
 		}
 
 		/* Restore stdout/stderr to console for the child if parent redirected with -o */
-		if (g_saved_stdout >= 0) dup2(g_saved_stdout, STDOUT_FILENO);
-		if (g_saved_stderr >= 0) dup2(g_saved_stderr, STDERR_FILENO);
+		if (g_saved_stdout >= 0)
+			dup2(g_saved_stdout, STDOUT_FILENO);
+		if (g_saved_stderr >= 0)
+			dup2(g_saved_stderr, STDERR_FILENO);
 		/* stop self; parent will SIGSTOP/SIGCONT around BPF attach */
 		if (raise(SIGSTOP) != 0)
 			_exit(127);
@@ -410,21 +383,21 @@ static void stop_process(pid_t pid)
 	if (kill(pid, 0) != 0 && errno == ESRCH)
 		return;
 
-	(void)kill(pid, SIGINT);
+	(void) kill(pid, SIGINT);
 	for (i = 0; i < 30; i++) {
 		r = waitpid(pid, &st, WNOHANG);
 		if (r == pid)
 			return;
 		usleep(100 * 1000);
 	}
-	(void)kill(pid, SIGTERM);
+	(void) kill(pid, SIGTERM);
 	for (i = 0; i < 20; i++) {
 		r = waitpid(pid, &st, WNOHANG);
 		if (r == pid)
 			return;
 		usleep(100 * 1000);
 	}
-	(void)kill(pid, SIGKILL);
+	(void) kill(pid, SIGKILL);
 	waitpid(pid, &st, 0);
 }
 
@@ -436,21 +409,24 @@ static void print_hist_config(void)
 	unsigned long long lat_range = lat_width * (unsigned long long)LAT_BUCKETS;
 	unsigned long long on_range  = on_width  * (unsigned long long)ON_BUCKETS;
 	unsigned long mem_per_entry = 2u * (LAT_BUCKETS + ON_BUCKETS) * 4u;
+
 	fprintf(stdout,
-		"hist-config: latency: width_ns=%llu buckets=%u range_ns=%llu\n",
-		lat_width, LAT_BUCKETS, lat_range);
+			"hist-config: latency: width_ns=%llu buckets=%u range_ns=%llu\n",
+			lat_width, LAT_BUCKETS, lat_range);
 	fprintf(stdout,
-		"hist-config: oncpu:   width_ns=%llu buckets=%u range_ns=%llu\n",
-		on_width, ON_BUCKETS, on_range);
+			"hist-config: oncpu:   width_ns=%llu buckets=%u range_ns=%llu\n",
+			on_width, ON_BUCKETS, on_range);
 	fprintf(stdout,
-		"hist-config: memory-per-thread (both histograms) ~%lu bytes\n",
-		mem_per_entry);
+			"hist-config: memory-per-thread (both histograms) ~%lu bytes\n",
+			mem_per_entry);
 }
 
 static int prepare_filters_and_target(struct schedscore_bpf *skel, struct opts *o,
-				char **target_argv, pid_t *target_pid, struct config *cfg)
+		char **target_argv, pid_t *target_pid, struct config *cfg)
 {
-
+	__u32 idx0 = 0;
+	int spawned = 0;
+	int mfd;
 
 	/* init cfg */
 	memset(cfg, 0, sizeof(*cfg));
@@ -465,25 +441,24 @@ static int prepare_filters_and_target(struct schedscore_bpf *skel, struct opts *
 	cfg->paramset_recheck = o->paramset_recheck ? 1 : 0;
 	cfg->timeline_enable = o->timeline_enable ? 1 : 0;
 
-	int spawned = 0;
-
 	/* Spawn target stopped, wait, add pid filter */
 	if (target_argv) {
+		int st;
+
 		*target_pid = spawn_target(target_argv);
 		if (*target_pid < 0) {
 			fprintf(stderr, "failed to spawn target\n");
 			return -1;
 		}
 		spawned = 1;
-		{
-			int st;
-			pid_t wr = waitpid(*target_pid, &st, WUNTRACED);
-			if (wr == -1) {
-				perror("waitpid(target)");
-			} else if (wr != *target_pid || !WIFSTOPPED(st)) {
-				fprintf(stderr, "warn: target did not report stopped state\n");
-			}
+
+		pid_t wr = waitpid(*target_pid, &st, WUNTRACED);
+		if (wr == -1) {
+			perror("waitpid(target)");
+		} else if (wr != *target_pid || !WIFSTOPPED(st)) {
+			fprintf(stderr, "warn: target did not report stopped state\n");
 		}
+
 		if (add_pid_filter_multi(skel, *target_pid))
 			fprintf(stderr, "warn: pid filter update failed for target pid\n");
 		cfg->use_pid_filter = 1;
@@ -514,32 +489,30 @@ static int prepare_filters_and_target(struct schedscore_bpf *skel, struct opts *
 		cfg->use_cgrp_filter = 1;
 	}
 
+	/* detectors always set regardless of filters */
+	cfg->detect_wakeup_lat_ns = o->detect_wakeup_lat_ns;
+	cfg->detect_migration_xnuma = o->detect_migration_xnuma ? 1 : 0;
+	cfg->detect_migration_xllc  = o->detect_migration_xllc  ? 1 : 0;
+	cfg->detect_remote_wakeup_xnuma = o->detect_remote_wakeup_xnuma ? 1 : 0;
+
 	/* push cfg */
-	{
-		int mfd = bpf_map__fd(skel->maps.conf);
-		__u32 idx0 = 0;
-
-		/* detectors always set regardless of filters */
-		cfg->detect_wakeup_lat_ns = o->detect_wakeup_lat_ns;
-		cfg->detect_migration_xnuma = o->detect_migration_xnuma ? 1 : 0;
-		cfg->detect_migration_xllc  = o->detect_migration_xllc  ? 1 : 0;
-		cfg->detect_remote_wakeup_xnuma = o->detect_remote_wakeup_xnuma ? 1 : 0;
-
-		if (bpf_map_update_elem(mfd, &idx0, cfg, BPF_ANY)) {
-			perror("config update");
-			if (spawned && *target_pid > 0)
-				stop_process(*target_pid);
-			return -1;
-		}
+	mfd = bpf_map__fd(skel->maps.conf);
+	if (bpf_map_update_elem(mfd, &idx0, cfg, BPF_ANY)) {
+		perror("config update");
+		if (spawned && *target_pid > 0)
+			stop_process(*target_pid);
+		return -1;
 	}
 	return 0;
 }
 
 static int attach_and_launch(struct schedscore_bpf *skel, pid_t target_pid,
-			   char **target_argv, struct opts *o,
-			   struct sidecar *perf, struct sidecar *trce)
+		char **target_argv, struct opts *o,
+		struct sidecar *perf, struct sidecar *ftrace)
 {
-	(void)target_argv;
+	int perf_started = 0, ftrace_started = 0;
+	(void) target_argv;
+
 	if (schedscore_bpf__attach(skel)) {
 		fprintf(stderr, "failed to attach BPF programs. Ensure BTF and CONFIG_DEBUG_INFO_BTF are enabled.\n");
 		return -1;
@@ -549,7 +522,6 @@ static int attach_and_launch(struct schedscore_bpf *skel, pid_t target_pid,
 			perror("kill(SIGCONT target)");
 	}
 
-	int perf_started = 0, trce_started = 0;
 	if (o->perf_enable || o->perf_args) {
 		if (!o->perf_args)
 			o->perf_args = strdup("-a -e sched:* -o perf.data");
@@ -565,15 +537,16 @@ static int attach_and_launch(struct schedscore_bpf *skel, pid_t target_pid,
 			o->ftrace_args = strdup("-e sched -e irq -e softirq -o trace.dat");
 		if (!o->ftrace_args)
 			goto fail;
-		trce->pid = spawn_sidecar(trce->exe, o->ftrace_args);
-		if (trce->pid < 0)
+		ftrace->pid = spawn_sidecar(ftrace->exe, o->ftrace_args);
+		if (ftrace->pid < 0)
 			goto fail;
-		trce_started = 1;
+		ftrace_started = 1;
 	}
 	return 0;
+
 fail:
-	if (trce_started)
-		stop_process(trce->pid);
+	if (ftrace_started)
+		stop_process(ftrace->pid);
 	if (perf_started)
 		stop_process(perf->pid);
 	return -1;
@@ -582,24 +555,20 @@ fail:
 static void setup_signals(void)
 {
 	struct sigaction sa;
+
 	memset(&sa, 0, sizeof(sa));
 	sa.sa_handler = sig_handler;
 	sigaction(SIGINT, &sa, NULL);
 	sigaction(SIGTERM, &sa, NULL);
-	/* Ignore SIGALRM; we don't use it and some targets may set alarms */
-	{
-		struct sigaction sa_ign = {};
-		sa_ign.sa_handler = SIG_IGN;
-		sigaction(SIGALRM, &sa_ign, NULL);
-	}
 }
 
 static void run_until_done(pid_t target_pid, int duration_sec)
 {
+	int st; pid_t r;
+	int i, iters = duration_sec * 10;
+
 	if (target_pid > 0) {
-		int st; pid_t r;
 		if (duration_sec > 0) {
-			int i, iters = duration_sec * 10;
 			for (i = 0; i < iters && !exiting; i++) {
 				r = waitpid(target_pid, &st, WNOHANG);
 				if (r == target_pid) {
@@ -621,7 +590,6 @@ static void run_until_done(pid_t target_pid, int duration_sec)
 		}
 	} else {
 		if (duration_sec > 0) {
-			int i;
 			for (i = 0; i < duration_sec && !exiting; i++)
 				sleep(1);
 			exiting = 1;
@@ -633,15 +601,17 @@ static void run_until_done(pid_t target_pid, int duration_sec)
 }
 
 static int cleanup_and_dump(struct schedscore_bpf *skel, struct sidecar *perf,
-			   struct sidecar *trce, pid_t target_pid, const struct opts *o)
+		struct sidecar *trce, pid_t target_pid, const struct opts *o)
 {
+	int st;
+	pid_t r;
+
 	if (target_pid > 0) {
-		int st; pid_t r;
 		r = waitpid(target_pid, &st, WNOHANG);
 		if (r == 0) {
 			/* Only signal if still alive */
 			if (kill(target_pid, 0) == 0)
-				(void)kill(target_pid, SIGINT);
+				(void) kill(target_pid, SIGINT);
 		}
 	}
 	stop_process(perf->pid);
@@ -650,29 +620,25 @@ static int cleanup_and_dump(struct schedscore_bpf *skel, struct sidecar *perf,
 	return output_emit(skel, o);
 }
 
-/* moved: push_cpu_topology() is now in topo.c */
-
-static void setup_rlimit(void);
-static int open_and_load(struct schedscore_bpf **skel);
-
-/* moved to opts_parse.c */
-
 static void setup_rlimit(void)
 {
-	struct rlimit r = { .rlim_cur = RLIM_INFINITY, .rlim_max = RLIM_INFINITY };
+	struct rlimit r = {
+		.rlim_cur = RLIM_INFINITY,
+		.rlim_max = RLIM_INFINITY
+	};
+
 	if (setrlimit(RLIMIT_MEMLOCK, &r))
 		fprintf(stderr, "WARN: setrlimit RLIMIT_MEMLOCK failed: %s\n", strerror(errno));
 }
 
 static int open_and_load(struct schedscore_bpf **skel)
 {
-
 	*skel = schedscore_bpf__open();
+
 	if (!*skel) {
 		fprintf(stderr, "failed to open BPF skeleton\n");
 		return -1;
 	}
-	/* hist config is printed in main(), where opts are available */
 
 	if (schedscore_bpf__load(*skel)) {
 		fprintf(stderr, "failed to load BPF skeleton\n");
@@ -696,9 +662,11 @@ int main(int argc, char **argv)
 	struct config cfg = {};
 	struct opts o;
 	int err = 0;
+	int prc;
 
 	memset(&o, 0, sizeof(o));
-	int prc = parse_opts(argc, argv, &o, &target_argv);
+	prc = parse_opts(argc, argv, &o, &target_argv);
+
 	if (prc == 2) {
 		print_help_aligned(argv[0]);
 		err = 0;
@@ -719,7 +687,10 @@ int main(int argc, char **argv)
 
 	/* Redirect output early if requested */
 	if (o.out_path) {
-		if (setup_output_file(o.out_path)) { err = 1; goto out; }
+		if (setup_output_file(o.out_path)) {
+			err = 1;
+			goto out;
+		}
 	}
 
 	/* If just inspecting histogram config, print and exit */
@@ -736,11 +707,23 @@ int main(int argc, char **argv)
 	/* cache run-as-user and env-file for child */
 	g_run_as_user = o.run_as_user;
 	g_env_file = o.env_file;
-	if (open_and_load(&skel)) { err = 1; goto out; }
-	if (o.dump_topology) { dump_topology_table(skel); goto out; }
+	if (open_and_load(&skel)) {
+		err = 1;
+		goto out;
+	}
+	if (o.dump_topology) {
+		dump_topology_table(skel);
+		goto out;
+	}
 
-	if (prepare_filters_and_target(skel, &o, target_argv, &target_pid, &cfg)) { err = 1; goto out; }
-	if (attach_and_launch(skel, target_pid, target_argv, &o, &perf, &trce)) { err = 1; goto out; }
+	if (prepare_filters_and_target(skel, &o, target_argv, &target_pid, &cfg)) {
+		err = 1;
+		goto out;
+	}
+	if (attach_and_launch(skel, target_pid, target_argv, &o, &perf, &trce)) {
+		err = 1;
+		goto out;
+	}
 
 	setup_signals();
 	run_until_done(target_pid, o.duration_sec);
@@ -761,5 +744,3 @@ out:
 	free(o.columns);
 	return err ? 1 : 0;
 }
-
-/* moved to topo.c */

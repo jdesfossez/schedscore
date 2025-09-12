@@ -9,8 +9,6 @@
 
 char LICENSE[] SEC("license") = "GPL";
 
-#define TASK_COMM_LEN 16
-
 /* ---------- config (set by userspace) ---------- */
 struct {
 	__uint(type, BPF_MAP_TYPE_ARRAY);

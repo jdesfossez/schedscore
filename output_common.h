@@ -10,7 +10,7 @@
  * schedscore headers and build dependencies. Keep in sync with uapi. */
 
 enum { SC_MR_WAKEUP, SC_MR_LB, SC_MR_NUMA, SC_MR__COUNT };
-/* Locality tiers: smt (same core), l2, llc (L3), xllc, xnuma */
+/* Locality tiers: smt (same core), l2, llc (L3), xllc, xnuma. */
 enum { SC_ML_CORE, SC_ML_L2, SC_ML_LLC, SC_ML_XLLC, SC_ML_XNUMA, SC_ML__COUNT };
 
 /* Snapshot of the minimal data needed by output formatters for unit tests

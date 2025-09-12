@@ -78,8 +78,6 @@ static unsigned long long parse_time_to_ns(const char *s)
 static int cpu_in_cpulist(const char *s, int cpu);
 static int detect_numa_id(int cpu, unsigned int *numa_id);
 
-static int cpu_in_cpulist(const char *s, int cpu);
-static int detect_numa_id(int cpu, unsigned int *numa_id);
 static void print_help_aligned(const char *prog);
 
 
@@ -818,8 +816,6 @@ static int parse_opts(int argc, char **argv, struct opts *o, char ***target_argv
 }
 
 static void setup_rlimit(void)
-
-
 {
 	struct rlimit r = { .rlim_cur = RLIM_INFINITY, .rlim_max = RLIM_INFINITY };
 	if (setrlimit(RLIMIT_MEMLOCK, &r))
@@ -861,6 +857,7 @@ int main(int argc, char **argv)
 	struct opts o;
 	int err = 0;
 
+	memset(&o, 0, sizeof(o));
 	int prc = parse_opts(argc, argv, &o, &target_argv);
 	if (prc == 2) {
 		print_help_aligned(argv[0]);
@@ -902,7 +899,7 @@ int main(int argc, char **argv)
 	g_run_as_user = o.run_as_user;
 	g_env_file = o.env_file;
 	if (open_and_load(&skel)) { err = 1; goto out; }
-		if (o.dump_topology) { dump_topology_table(skel); goto out; }
+if (o.dump_topology) { dump_topology_table(skel); goto out; }
 
 	if (prepare_filters_and_target(skel, &o, target_argv, &target_pid, &cfg)) { err = 1; goto out; }
 	if (attach_and_launch(skel, target_pid, target_argv, &o, &perf, &trce)) { err = 1; goto out; }
@@ -918,6 +915,12 @@ out:
 	free(o.cgroup_path);
 	free(o.perf_args);
 	free(o.ftrace_args);
+	free(o.run_as_user);
+	free(o.env_file);
+	free(o.out_path);
+	free(o.out_dir);
+	free(o.format);
+	free(o.columns);
 	return err ? 1 : 0;
 }
 
@@ -994,12 +997,13 @@ static int detect_l2_id(int cpu, unsigned int *l2_id)
 
 
 static int detect_llc_highest(int cpu, unsigned int *llc_id)
-
 {
-	char p[256]; unsigned int best_id=0, best_lvl=0;
+	char p[256]; unsigned int best_id = 0, best_lvl = 0;
 	for (int idx = 0; idx < 10; idx++) {
 		snprintf(p, sizeof(p), "/sys/devices/system/cpu/cpu%d/cache/index%d/type", cpu, idx);
-		FILE *f = fopen(p, "r"); if (!f) continue;
+		FILE *f = fopen(p, "r");
+		if (!f)
+			continue;
 		char typebuf[32] = {0}; if (!fgets(typebuf, sizeof(typebuf), f)) { fclose(f); continue; }
 		fclose(f);
 		if (!strstr(typebuf, "Unified")) continue;

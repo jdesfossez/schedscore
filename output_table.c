@@ -11,18 +11,18 @@
 #include "emit_helpers.h"
 
 const char *col_name[COL__COUNT] = {
-    [COL_PID] = "pid",
-    [COL_COMM] = "comm",
-    [COL_PARAMSET_ID] = "paramset_id",
-    [COL_P50_LAT] = "p50_sched_latency_ns",
-    [COL_AVG_LAT] = "avg_sched_latency_ns",
-    [COL_P95_LAT] = "p95_sched_latency_ns",
-    [COL_P99_LAT] = "p99_sched_latency_ns",
-    [COL_P50_ON] = "p50_oncpu_ns",
-    [COL_AVG_ON] = "avg_oncpu_ns",
-    [COL_P95_ON] = "p95_oncpu_ns",
-    [COL_P99_ON] = "p99_oncpu_ns",
-    [COL_NR_PERIODS] = "nr_slices",
+	[COL_PID] = "pid",
+	[COL_COMM] = "comm",
+	[COL_PARAMSET_ID] = "paramset_id",
+	[COL_P50_LAT] = "p50_sched_latency_ns",
+	[COL_AVG_LAT] = "avg_sched_latency_ns",
+	[COL_P95_LAT] = "p95_sched_latency_ns",
+	[COL_P99_LAT] = "p99_sched_latency_ns",
+	[COL_P50_ON] = "p50_oncpu_ns",
+	[COL_AVG_ON] = "avg_oncpu_ns",
+	[COL_P95_ON] = "p95_oncpu_ns",
+	[COL_P99_ON] = "p99_oncpu_ns",
+	[COL_NR_PERIODS] = "nr_slices",
 };
 
 
@@ -35,7 +35,7 @@ const char *col_name[COL__COUNT] = {
 void compute_pid_table_widths(struct schedscore_bpf *skel, const struct col_set *cs, int *widths)
 {
 	int fd = bpf_map__fd(skel->maps.stats);
-	__u32 key=0, next=0; int err;
+	__u32 key = 0, next = 0; int err;
 	struct schedscore_pid_stats val;
 	char buf[64];
 	for (int i=0;i<cs->cnt;i++) {

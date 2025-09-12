@@ -4,25 +4,25 @@
 
 static void fprint_migr_block(FILE *out, const uint64_t g[SC_MR__COUNT][SC_ML__COUNT])
 {
-    /* wakeup | loadbalance | numa with smt l2 llc xllc xnuma */
-    fprintf(out, " | %llu %llu %llu %llu %llu",
-            (unsigned long long)g[SC_MR_WAKEUP][SC_ML_CORE],
-            (unsigned long long)g[SC_MR_WAKEUP][SC_ML_L2],
-            (unsigned long long)g[SC_MR_WAKEUP][SC_ML_LLC],
-            (unsigned long long)g[SC_MR_WAKEUP][SC_ML_XLLC],
-            (unsigned long long)g[SC_MR_WAKEUP][SC_ML_XNUMA]);
-    fprintf(out, " | %llu %llu %llu %llu %llu",
-            (unsigned long long)g[SC_MR_LB][SC_ML_CORE],
-            (unsigned long long)g[SC_MR_LB][SC_ML_L2],
-            (unsigned long long)g[SC_MR_LB][SC_ML_LLC],
-            (unsigned long long)g[SC_MR_LB][SC_ML_XLLC],
-            (unsigned long long)g[SC_MR_LB][SC_ML_XNUMA]);
-    fprintf(out, " | %llu %llu %llu %llu %llu",
-            (unsigned long long)g[SC_MR_NUMA][SC_ML_CORE],
-            (unsigned long long)g[SC_MR_NUMA][SC_ML_L2],
-            (unsigned long long)g[SC_MR_NUMA][SC_ML_LLC],
-            (unsigned long long)g[SC_MR_NUMA][SC_ML_XLLC],
-            (unsigned long long)g[SC_MR_NUMA][SC_ML_XNUMA]);
+	/* wakeup | loadbalance | numa with smt l2 llc xllc xnuma */
+	fprintf(out, " | %llu %llu %llu %llu %llu",
+		(unsigned long long)g[SC_MR_WAKEUP][SC_ML_CORE],
+		(unsigned long long)g[SC_MR_WAKEUP][SC_ML_L2],
+		(unsigned long long)g[SC_MR_WAKEUP][SC_ML_LLC],
+		(unsigned long long)g[SC_MR_WAKEUP][SC_ML_XLLC],
+		(unsigned long long)g[SC_MR_WAKEUP][SC_ML_XNUMA]);
+	fprintf(out, " | %llu %llu %llu %llu %llu",
+		(unsigned long long)g[SC_MR_LB][SC_ML_CORE],
+		(unsigned long long)g[SC_MR_LB][SC_ML_L2],
+		(unsigned long long)g[SC_MR_LB][SC_ML_LLC],
+		(unsigned long long)g[SC_MR_LB][SC_ML_XLLC],
+		(unsigned long long)g[SC_MR_LB][SC_ML_XNUMA]);
+	fprintf(out, " | %llu %llu %llu %llu %llu",
+		(unsigned long long)g[SC_MR_NUMA][SC_ML_CORE],
+		(unsigned long long)g[SC_MR_NUMA][SC_ML_L2],
+		(unsigned long long)g[SC_MR_NUMA][SC_ML_LLC],
+		(unsigned long long)g[SC_MR_NUMA][SC_ML_XLLC],
+		(unsigned long long)g[SC_MR_NUMA][SC_ML_XNUMA]);
 }
 
 int output_table_from_snapshot(FILE *out, const struct ss_snapshot *snap)

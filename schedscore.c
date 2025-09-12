@@ -128,55 +128,31 @@ static unsigned long long parse_time_to_ns(const char *s)
 	return 0ULL; /* invalid suffix */
 }
 
-/* Apply a --detect argument like: wake-lat=1us,xnuma,xllc,remote-wakeup-xnuma */
-static int apply_detect_arg(struct opts *o, const char *arg)
-{
-	char *spec = strdup(arg);
-	char *tok, *saveptr = NULL;
-	int rc = 0;
-	if (!spec) { fprintf(stderr, "oom\n"); return -1; }
-	for (tok = strtok_r(spec, ",", &saveptr); tok; tok = strtok_r(NULL, ",", &saveptr)) {
-		/* trim leading spaces */
-		while (*tok == ' ' || *tok == '\t') tok++;
-		char *eq = strchr(tok, '=');
-		if (eq) {
-			*eq = '\0';
-			const char *key = tok;
-			const char *val = eq + 1;
-			if (strcmp(key, "wake-lat") == 0 || strcmp(key, "wake-latency") == 0) {
-				unsigned long long ns = parse_time_to_ns(val);
-				if (!ns) { fprintf(stderr, "invalid wake-lat value: %s\n", val); rc = -1; break; }
-				o->detect_wakeup_lat_ns = ns;
-			} else {
-				fprintf(stderr, "unknown detector key: %s\n", key); rc = -1; break;
-			}
-		} else {
-			/* boolean detectors */
-			if (strcmp(tok, "xnuma") == 0 || strcmp(tok, "migration-xnuma") == 0)
-				o->detect_migration_xnuma = true;
-			else if (strcmp(tok, "xllc") == 0 || strcmp(tok, "migration-xllc") == 0)
-				o->detect_migration_xllc = true;
-			else if (strcmp(tok, "remote-wakeup-xnuma") == 0 || strcmp(tok, "remote-xnuma") == 0)
-				o->detect_remote_wakeup_xnuma = true;
-			else if (*tok) {
-				fprintf(stderr, "unknown detector: %s\n", tok); rc = -1; break;
-			}
-		}
-	}
-	free(spec);
-	return rc;
-}
 
 static int cpu_in_cpulist(const char *s, int cpu);
 static int detect_numa_id(int cpu, unsigned int *numa_id);
 
 static int cpu_in_cpulist(const char *s, int cpu);
 static int detect_numa_id(int cpu, unsigned int *numa_id);
+static void print_help_aligned(const char *prog);
 
+
+
+
+
+#if 0
 
 static void usage(const char *prog)
 {
-	fprintf(stderr,
+	print_help_aligned(prog);
+	return;
+	/* cleaned concise help */
+#if 0
+
+
+	print_help_aligned(prog);
+	return;
+
 		"Usage: %s [--duration SEC] [--pid PID] [--comm NAME]\n"
 		"          [--cgroup PATH | --cgroupid ID]\n"
 		"          [--latency-warn-us N] [--warn-enable]\n"
@@ -190,10 +166,49 @@ static void usage(const char *prog)
 		"          [--format csv|json|table]  # output format (default: table)\n"
 			"          [--dump-topology]         # print cpu->(smt,l2,llc,numa) map and exit\n"
 
+#endif
+
 
 		"          [--columns COL1,COL2,...]  # select/reorder columns\n"
 		"          [--show-hist-config]\n",
 		prog);
+/* legacy verbose usage block end */
+
+}
+#endif /* disable legacy usage() */
+
+
+static void print_help_aligned(const char *prog)
+{
+	printf("Usage: %s [options] -- [command...]\n\n", prog);
+	printf("Options:\n");
+	printf("  --duration SEC                run for SEC seconds (0=until Ctrl-C)\n");
+	printf("  --pid PID                     filter by PID\n");
+	printf("  --comm NAME                   filter by comm\n");
+	printf("  --cgroup PATH                 filter by cgroup path\n");
+	printf("  --cgroupid ID                 filter by cgroup id\n");
+	printf("  --latency-warn-us N           set bpf_printk threshold (us)\n");
+	printf("  --warn-enable                 enable warning prints\n");
+	printf("  --perf                        capture with perf(1)\n");
+	printf("  --ftrace                      capture with trace-cmd(1)\n");
+	printf("  --perf-args 'ARGS'            perf(1) arguments\n");
+	printf("  --ftrace-args 'ARGS'          trace-cmd(1) arguments\n");
+	printf("  -f, --follow                  follow children\n");
+	printf("  --user USER                   run target as user/uid\n");
+	printf("  --env-file FILE               add KEY=VALUE lines to target env\n");
+	printf("  --output FILE                 write all output to FILE\n");
+	printf("  --out-dir DIR                 write multiple outputs under DIR\n");
+	printf("  --format csv|json|table       output format (default: table)\n");
+	printf("  --columns NAMES               select/reorder columns\n");
+	printf("  --show-hist-config            print histogram config and exit\n");
+	printf("  --show-migration-matrix       include paramset migration matrix\n");
+	printf("  --show-pid-migration-matrix   include per-PID migration matrix\n");
+	printf("  --detect-wakeup-latency VAL   set wakeup detector (e.g. 1us, 1ms)\n");
+	printf("  --detect-migration-xnuma      enable cross-NUMA migration detector\n");
+	printf("  --detect-migration-xllc       enable cross-LLC migration detector\n");
+	printf("  --detect-remote-wakeup-xnuma  enable remote wakeup xNUMA detector\n");
+	printf("  --dump-topology               print cpu->(smt,l2,llc,numa) and exit\n");
+	printf("  -h, --help                    show this help\n");
 }
 
 static void dump_topology_table(struct schedscore_bpf *skel)
@@ -753,16 +768,13 @@ static int parse_opts(int argc, char **argv, struct opts *o, char ***target_argv
 		{ "detect-migration-xnuma", no_argument, 0, 10 },
 		{ "detect-migration-xllc",  no_argument, 0, 11 },
 		{ "detect-remote-wakeup-xnuma", no_argument, 0, 12 },
-		{ "detect-wakeup-latency", required_argument, 0,  9 },
-		{ "detect-migration-xnuma", no_argument, 0, 10 },
-		{ "detect-migration-xllc",  no_argument, 0, 11 },
-		{ "detect-remote-wakeup-xnuma", no_argument, 0, 12 },
 		{ "dump-topology",      no_argument,       0,  8  },
 		{ "no-aggregate",       no_argument,       0,  1  },
 		{ "paramset-recheck",   no_argument,       0,  2  },
 		{ "timeline",           no_argument,       0,  3  },
 		{ "no-resolve-masks",   no_argument,       0,  4  },
 		{ "show-hist-config",   no_argument,       0,  5  },
+		{ "help",               no_argument,       0, 'h' },
 		{ 0, 0, 0,  0 }
 	};
 	int c;
@@ -780,7 +792,7 @@ static int parse_opts(int argc, char **argv, struct opts *o, char ***target_argv
 		o->show_migration_matrix = false;
 
 
-	while ((c = getopt_long(argc, argv, "d:p:n:g:G:l:wPFA:R:fu:e:o:D:M:C:T:", long_opts, NULL)) != -1) {
+	while ((c = getopt_long(argc, argv, "hd:p:n:g:G:l:wPFA:R:fu:e:o:D:M:C:", long_opts, NULL)) != -1) {
 		switch (c) {
 		case 'd': o->duration_sec = atoi(optarg); break;
 		case 'p': o->pid = atoi(optarg); break;
@@ -836,14 +848,6 @@ static int parse_opts(int argc, char **argv, struct opts *o, char ***target_argv
 			o->perf_args = strdup(optarg);
 			if (!o->perf_args) { fprintf(stderr, "oom\n"); return -1; }
 			break;
-		case 9: {
-			unsigned long long ns = parse_time_to_ns(optarg);
-			if (!ns) { fprintf(stderr, "invalid --detect-wakeup-latency value\n"); return -1; }
-			o->detect_wakeup_lat_ns = ns;
-			break; }
-		case 10: o->detect_migration_xnuma = true; break;
-		case 11: o->detect_migration_xllc  = true; break;
-		case 12: o->detect_remote_wakeup_xnuma = true; break;
 		case 'R':
 			o->ftrace_args = strdup(optarg);
 			if (!o->ftrace_args) { fprintf(stderr, "oom\n"); return -1; }
@@ -856,10 +860,9 @@ static int parse_opts(int argc, char **argv, struct opts *o, char ***target_argv
 		case 5: o->show_hist_config = true; break;
 		case 6: o->show_migration_matrix = true; break;
 		case 7: o->show_pid_migration_matrix = true; break;
-			case 8: o->dump_topology = true; break;
-
+		case 8: o->dump_topology = true; break;
+		case 'h': return 2; /* help requested */
 		default:
-		usage(argv[0]);
 			return -1;
 		}
 	}
@@ -869,6 +872,8 @@ static int parse_opts(int argc, char **argv, struct opts *o, char ***target_argv
 }
 
 static void setup_rlimit(void)
+
+
 {
 	struct rlimit r = { .rlim_cur = RLIM_INFINITY, .rlim_max = RLIM_INFINITY };
 	if (setrlimit(RLIMIT_MEMLOCK, &r))
@@ -895,7 +900,6 @@ static int open_and_load(struct schedscore_bpf **skel)
 	}
 	/* Push CPU topology after maps are loaded */
 	push_cpu_topology(*skel);
-
 	return 0;
 }
 
@@ -911,8 +915,27 @@ int main(int argc, char **argv)
 	struct opts o;
 	int err = 0;
 
-	if (parse_opts(argc, argv, &o, &target_argv))
+	int prc = parse_opts(argc, argv, &o, &target_argv);
+	if (prc == 2) {
+		print_help_aligned(argv[0]);
+		return 0;
+	}
+	if (prc)
 		return 1;
+
+	/* --help/-h should not require root */
+	for (int i = 1; i < argc; i++) {
+		if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+			print_help_aligned(argv[0]);
+			return 0;
+		}
+	}
+
+	/* Require root for normal runs */
+	if (geteuid() != 0) {
+		fprintf(stderr, "schedscore: needs root (CAP_BPF etc.). Try: sudo %s ...\n", argv[0]);
+		return 1;
+	}
 
 	/* Redirect output early if requested */
 	if (o.out_path) {

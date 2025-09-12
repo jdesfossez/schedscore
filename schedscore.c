@@ -398,7 +398,17 @@ static void stop_process(pid_t pid)
 		usleep(100 * 1000);
 	}
 	(void) kill(pid, SIGKILL);
-	waitpid(pid, &st, 0);
+
+	/* Final bounded reap */
+	for (i = 0; i < 10; i++) {
+		r = waitpid(pid, &st, WNOHANG);
+		if (r == pid)
+			return;
+		if (r < 0 && errno == ECHILD)
+			return;
+		usleep(100 * 1000);
+	}
+	return;
 }
 
 

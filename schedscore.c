@@ -283,7 +283,10 @@ static pid_t spawn_sidecar(const char *exe, const char *args)
 				_exit(127);
 			snprintf(cmd, len, "%s %s", exe, args);
 			(void)execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
+			/* If execl returns, preserve errno then free */
+			int saved = errno;
 			free(cmd);
+			errno = saved;
 		} else {
 			(void)execlp(exe, exe, (char *)NULL);
 		}
@@ -475,8 +478,11 @@ static int prepare_filters_and_target(struct schedscore_bpf *skel, struct opts *
 		{
 			int st;
 			pid_t wr = waitpid(*target_pid, &st, WUNTRACED);
-			if (wr != *target_pid || !WIFSTOPPED(st))
+			if (wr == -1) {
+				perror("waitpid(target)");
+			} else if (wr != *target_pid || !WIFSTOPPED(st)) {
 				fprintf(stderr, "warn: target did not report stopped state\n");
+			}
 		}
 		if (add_pid_filter_multi(skel, *target_pid))
 			fprintf(stderr, "warn: pid filter update failed for target pid\n");
@@ -496,8 +502,6 @@ static int prepare_filters_and_target(struct schedscore_bpf *skel, struct opts *
 	if (o->comm) {
 		if (add_comm_filter(skel, o->comm))
 			fprintf(stderr, "warn: comm filter update failed\n");
-
-
 		cfg->use_comm_filter = 1;
 	}
 	if (o->have_cgroup_id) {
@@ -544,33 +548,35 @@ static int attach_and_launch(struct schedscore_bpf *skel, pid_t target_pid,
 		if (kill(target_pid, SIGCONT) != 0)
 			perror("kill(SIGCONT target)");
 	}
-	int perf_started = 0;
+
+	int perf_started = 0, trce_started = 0;
 	if (o->perf_enable || o->perf_args) {
 		if (!o->perf_args)
 			o->perf_args = strdup("-a -e sched:* -o perf.data");
 		if (!o->perf_args)
-			return -1;
+			goto fail;
 		perf->pid = spawn_sidecar(perf->exe, o->perf_args);
 		if (perf->pid < 0)
-			return -1;
+			goto fail;
 		perf_started = 1;
 	}
 	if (o->ftrace_enable || o->ftrace_args) {
 		if (!o->ftrace_args)
 			o->ftrace_args = strdup("-e sched -e irq -e softirq -o trace.dat");
-		if (!o->ftrace_args) {
-			if (perf_started)
-				stop_process(perf->pid);
-			return -1;
-		}
+		if (!o->ftrace_args)
+			goto fail;
 		trce->pid = spawn_sidecar(trce->exe, o->ftrace_args);
-		if (trce->pid < 0) {
-			if (perf_started)
-				stop_process(perf->pid);
-			return -1;
-		}
+		if (trce->pid < 0)
+			goto fail;
+		trce_started = 1;
 	}
 	return 0;
+fail:
+	if (trce_started)
+		stop_process(trce->pid);
+	if (perf_started)
+		stop_process(perf->pid);
+	return -1;
 }
 
 static void setup_signals(void)
@@ -633,7 +639,7 @@ static int cleanup_and_dump(struct schedscore_bpf *skel, struct sidecar *perf,
 		int st; pid_t r;
 		r = waitpid(target_pid, &st, WNOHANG);
 		if (r == 0) {
-
+			/* Only signal if still alive */
 			if (kill(target_pid, 0) == 0)
 				(void)kill(target_pid, SIGINT);
 		}
@@ -695,34 +701,32 @@ int main(int argc, char **argv)
 	int prc = parse_opts(argc, argv, &o, &target_argv);
 	if (prc == 2) {
 		print_help_aligned(argv[0]);
-		return 0;
+		err = 0;
+		goto out;
 	}
-	if (prc)
-		return 1;
+	if (prc) {
+		err = 1;
+		goto out;
+	}
 
-	/* --help/-h should not require root */
-	for (int i = 1; i < argc; i++) {
-		if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
-			print_help_aligned(argv[0]);
-			return 0;
-		}
-	}
 
 	/* Require root for normal runs */
 	if (geteuid() != 0) {
 		fprintf(stderr, "schedscore: needs root (CAP_BPF etc.). Try: sudo %s ...\n", argv[0]);
-		return 1;
+		err = 1;
+		goto out;
 	}
 
 	/* Redirect output early if requested */
 	if (o.out_path) {
-		if (setup_output_file(o.out_path)) return 1;
+		if (setup_output_file(o.out_path)) { err = 1; goto out; }
 	}
 
 	/* If just inspecting histogram config, print and exit */
 	if (o.show_hist_config) {
 		print_hist_config();
-		return 0;
+		err = 0;
+		goto out;
 	}
 
 	/* libbpf strict mode: future-proof ABI expectations */
@@ -733,7 +737,7 @@ int main(int argc, char **argv)
 	g_run_as_user = o.run_as_user;
 	g_env_file = o.env_file;
 	if (open_and_load(&skel)) { err = 1; goto out; }
-if (o.dump_topology) { dump_topology_table(skel); goto out; }
+	if (o.dump_topology) { dump_topology_table(skel); goto out; }
 
 	if (prepare_filters_and_target(skel, &o, target_argv, &target_pid, &cfg)) { err = 1; goto out; }
 	if (attach_and_launch(skel, target_pid, target_argv, &o, &perf, &trce)) { err = 1; goto out; }

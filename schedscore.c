@@ -92,14 +92,21 @@ static void print_help_aligned(const char *prog)
 
 static int add_pid_filter(struct schedscore_bpf *skel, int pid)
 {
-	int fd = bpf_map__fd(skel->maps.pid_filter);
+	int fd;
 	__u8 one = 1;
 
-	if (pid <= 0)
+	if (!skel || pid <= 0)
 		return 0;
 
+	fd = bpf_map__fd(skel->maps.pid_filter);
+	if (fd < 0) {
+		fprintf(stderr, "Failed to get pid_filter map fd\n");
+		return -1;
+	}
+
 	if (bpf_map_update_elem(fd, &pid, &one, BPF_ANY)) {
-		perror("pid_filter update");
+		fprintf(stderr, "Failed to update pid_filter for pid %d: %s\n",
+			pid, strerror(errno));
 		return -1;
 	}
 
@@ -110,34 +117,52 @@ static int add_comm_filter(struct schedscore_bpf *skel, const char *comm)
 {
 	struct comm_key key = {};
 	__u8 one = 1;
-	int fd;
+	int fd, ret;
 
-	if (!comm || !*comm)
+	if (!skel || !comm || !*comm)
 		return 0;
 
 	fd = bpf_map__fd(skel->maps.comm_filter);
-	snprintf(key.comm, sizeof(key.comm), "%s", comm);
-
-	if (bpf_map_update_elem(fd, &key, &one, BPF_ANY)) {
-		perror("comm_filter update");
+	if (fd < 0) {
+		fprintf(stderr, "Failed to get comm_filter map fd\n");
 		return -1;
 	}
+
+	ret = snprintf(key.comm, sizeof(key.comm), "%s", comm);
+	if (ret >= (int)sizeof(key.comm)) {
+		fprintf(stderr, "Command name too long: %s\n", comm);
+		return -1;
+	}
+
+	if (bpf_map_update_elem(fd, &key, &one, BPF_ANY)) {
+		fprintf(stderr, "Failed to update comm_filter for '%s': %s\n",
+			comm, strerror(errno));
+		return -1;
+	}
+
 	return 0;
 }
 
 static int mark_tracked_pid(struct schedscore_bpf *skel, __u32 pid)
 {
 	__u8 one = 1;
-	int fd = bpf_map__fd(skel->maps.tracked);
+	int fd;
 
-	if (pid <= 0)
+	if (!skel || pid <= 0)
 		return 0;
-	if (fd < 0)
-		return -1;
-	if (bpf_map_update_elem(fd, &pid, &one, BPF_ANY)) {
-		perror("tracked map update");
+
+	fd = bpf_map__fd(skel->maps.tracked);
+	if (fd < 0) {
+		fprintf(stderr, "Failed to get tracked map fd\n");
 		return -1;
 	}
+
+	if (bpf_map_update_elem(fd, &pid, &one, BPF_ANY)) {
+		fprintf(stderr, "Failed to update tracked map for pid %u: %s\n",
+			pid, strerror(errno));
+		return -1;
+	}
+
 	return 0;
 }
 
@@ -159,27 +184,53 @@ static int add_cgroup_filter_id(struct schedscore_bpf *skel, unsigned long long 
 
 static int setup_output_file(const char *path)
 {
-	int fd = open(path, O_CREAT|O_TRUNC|O_WRONLY, 0644);
+	int fd;
+
+	if (!path || !*path) {
+		fprintf(stderr, "Invalid output file path\n");
+		return -1;
+	}
 
 	/* Save console fds for child exec */
-	if (g_saved_stdout < 0)
+	if (g_saved_stdout < 0) {
 		g_saved_stdout = dup(STDOUT_FILENO);
-	if (g_saved_stderr < 0)
+		if (g_saved_stdout < 0) {
+			fprintf(stderr, "Failed to save stdout fd: %s\n",
+				strerror(errno));
+			return -1;
+		}
+	}
+
+	if (g_saved_stderr < 0) {
 		g_saved_stderr = dup(STDERR_FILENO);
+		if (g_saved_stderr < 0) {
+			fprintf(stderr, "Failed to save stderr fd: %s\n",
+				strerror(errno));
+			return -1;
+		}
+	}
+
+	fd = open(path, O_CREAT | O_TRUNC | O_WRONLY, 0644);
 	if (fd < 0) {
-		perror("open -o file");
+		fprintf(stderr, "Failed to open output file '%s': %s\n",
+			path, strerror(errno));
 		return -1;
 	}
+
 	if (dup2(fd, STDOUT_FILENO) < 0) {
-		perror("dup2 stdout");
+		fprintf(stderr, "Failed to redirect stdout to '%s': %s\n",
+			path, strerror(errno));
 		close(fd);
 		return -1;
 	}
+
 	if (dup2(fd, STDERR_FILENO) < 0) {
-		perror("dup2 stderr");
+		fprintf(stderr, "Failed to redirect stderr to '%s': %s\n",
+			path, strerror(errno));
 		close(fd);
 		return -1;
 	}
+
 	close(fd);
 	return 0;
 }
@@ -192,90 +243,143 @@ static int add_cgroup_filter_path(struct schedscore_bpf *skel, const char *path)
 {
 	struct stat st;
 	__u8 one = 1;
-	int fd = bpf_map__fd(skel->maps.cgrp_filter);
+	int fd;
 	__u64 cgid;
 
-	if (!path || !*path)
+	if (!skel || !path || !*path)
 		return 0;
 
+	fd = bpf_map__fd(skel->maps.cgrp_filter);
+	if (fd < 0) {
+		fprintf(stderr, "Failed to get cgrp_filter map fd\n");
+		return -1;
+	}
+
 	if (stat(path, &st)) {
-		perror("stat(cgroup path)");
+		fprintf(stderr, "Failed to stat cgroup path '%s': %s\n",
+			path, strerror(errno));
 		return -1;
 	}
 
 	cgid = st.st_ino;
 
 	if (bpf_map_update_elem(fd, &cgid, &one, BPF_ANY)) {
-		perror("cgrp_filter update (path)");
+		fprintf(stderr, "Failed to update cgrp_filter for path '%s': %s\n",
+			path, strerror(errno));
 		return -1;
 	}
 
 	fprintf(stderr,
-			"NOTE: --cgroup PATH used; mapping path->id via inode (%llu). "
-			"For exact matching use --cgroupid.\n",
-			(unsigned long long)cgid);
+		"NOTE: --cgroup PATH used; mapping path->id via inode (%llu). "
+		"For exact matching use --cgroupid.\n",
+		(unsigned long long)cgid);
 
 	return 0;
 }
 
-/* spawn sidecar via /bin/sh -c for arg string */
+/* Spawn sidecar via /bin/sh -c for arg string */
 static pid_t spawn_sidecar(const char *exe, const char *args)
 {
-	pid_t pid = fork();
-	if (pid < 0) {
-		perror("fork");
+	pid_t pid;
+	size_t len;
+	char *cmd;
+	int ret;
+
+	if (!exe || !*exe) {
+		fprintf(stderr, "Invalid executable name for sidecar\n");
 		return -1;
 	}
-	if (pid == 0) {
-		if (args && *args) {
-			size_t len = strlen(exe) + 1 + strlen(args) + 1;
-			char *cmd = malloc(len);
 
-			if (!cmd)
+	pid = fork();
+	if (pid < 0) {
+		fprintf(stderr, "Failed to fork sidecar process: %s\n",
+			strerror(errno));
+		return -1;
+	}
+
+	if (pid == 0) {
+		/* Child process */
+		if (args && *args) {
+			len = strlen(exe) + 1 + strlen(args) + 1;
+			cmd = malloc(len);
+			if (!cmd) {
+				fprintf(stderr, "Failed to allocate memory for sidecar command\n");
 				_exit(127);
-			snprintf(cmd, len, "%s %s", exe, args);
-			(void) execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
+			}
+
+			ret = snprintf(cmd, len, "%s %s", exe, args);
+			if (ret >= (int)len) {
+				fprintf(stderr, "Sidecar command too long\n");
+				free(cmd);
+				_exit(127);
+			}
+
+			execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
 			/* If execl returns, preserve errno then free */
-			int saved = errno;
+			ret = errno;
 			free(cmd);
-			errno = saved;
+			fprintf(stderr, "Failed to exec sidecar '%s': %s\n",
+				cmd, strerror(ret));
 		} else {
-			(void) execlp(exe, exe, (char *)NULL);
+			execlp(exe, exe, (char *)NULL);
+			fprintf(stderr, "Failed to exec sidecar '%s': %s\n",
+				exe, strerror(errno));
 		}
-		perror("exec sidecar");
 		_exit(127);
 	}
+
 	return pid;
 }
 
 static void apply_env_file(const char *path)
 {
-	FILE *f = fopen(path, "re");
+	FILE *f;
 	char *line = NULL;
 	size_t n = 0;
+	ssize_t len;
+	char *s, *nl, *eq, *key, *val;
 
-	if (!f)
+	if (!path || !*path)
 		return;
 
-	while (getline(&line, &n, f) > 0) {
-		/* trim */
-		char *s = line;
+	f = fopen(path, "re");
+	if (!f) {
+		fprintf(stderr, "Warning: Failed to open env file '%s': %s\n",
+			path, strerror(errno));
+		return;
+	}
+
+	while ((len = getline(&line, &n, f)) > 0) {
+		/* Trim leading whitespace */
+		s = line;
 		while (*s == ' ' || *s == '\t')
 			s++;
+
+		/* Skip comments and empty lines */
 		if (*s == '#' || *s == '\n' || *s == '\0')
 			continue;
-		char *nl = strchr(s, '\n');
+
+		/* Remove trailing newline */
+		nl = strchr(s, '\n');
 		if (nl)
 			*nl = '\0';
-		char *eq = strchr(s, '=');
+
+		/* Find key=value separator */
+		eq = strchr(s, '=');
 		if (!eq)
 			continue;
+
 		*eq = '\0';
-		char *key = s;
-		char *val = eq + 1;
-		/* overwrite existing vars to match docker --env-file semantics */
-		setenv(key, val, 1);
+		key = s;
+		val = eq + 1;
+
+		/* Overwrite existing vars to match docker --env-file semantics */
+		if (setenv(key, val, 1) != 0) {
+			fprintf(stderr, "Warning: Failed to set environment variable '%s': %s\n",
+				key, strerror(errno));
+		}
 	}
+
 	free(line);
 	fclose(f);
 }
@@ -284,45 +388,77 @@ static int drop_to_user_and_env(const char *user_str)
 {
 	struct passwd pw, *res = NULL;
 	char buf[4096];
-	uid_t uid = (uid_t) - 1;
-	gid_t gid = (gid_t) - 1;
+	uid_t uid = (uid_t)-1;
+	gid_t gid = (gid_t)-1;
 	int is_numeric = 1;
+	const char *p;
+	int ret;
 
-	for (const char *p = user_str; *p; p++) {
+	if (!user_str || !*user_str) {
+		fprintf(stderr, "Invalid user string\n");
+		return -1;
+	}
+
+	/* Check if user_str is numeric */
+	for (p = user_str; *p; p++) {
 		if (*p < '0' || *p > '9') {
 			is_numeric = 0;
 			break;
 		}
 	}
+
 	if (is_numeric) {
-		uid = (uid_t) strtoul(user_str, NULL, 10);
-		if (getpwuid_r(uid, &pw, buf, sizeof(buf), &res) == 0 && res) {
+		uid = (uid_t)strtoul(user_str, NULL, 10);
+		ret = getpwuid_r(uid, &pw, buf, sizeof(buf), &res);
+		if (ret == 0 && res) {
 			gid = pw.pw_gid;
 		} else {
-			/* no passwd entry; default gid=uid, minimal env */
+			/* No passwd entry; default gid=uid, minimal env */
 			gid = uid;
+			fprintf(stderr, "Warning: No passwd entry for uid %u\n", uid);
 		}
 	} else {
-		if (getpwnam_r(user_str, &pw, buf, sizeof(buf), &res) != 0 || !res)
+		ret = getpwnam_r(user_str, &pw, buf, sizeof(buf), &res);
+		if (ret != 0 || !res) {
+			fprintf(stderr, "Failed to find user '%s': %s\n",
+				user_str, strerror(ret));
 			return -1;
-		uid = pw.pw_uid; gid = pw.pw_gid;
+		}
+		uid = pw.pw_uid;
+		gid = pw.pw_gid;
 	}
+
 	if (res) {
-		/* set env before dropping privileges to avoid surprises with restricted env */
-		setenv("HOME", pw.pw_dir ? pw.pw_dir : "", 1);
-		setenv("SHELL", pw.pw_shell ? pw.pw_shell : "/bin/sh", 1);
-		setenv("USER", pw.pw_name ? pw.pw_name : "", 1);
-		setenv("LOGNAME", pw.pw_name ? pw.pw_name : "", 1);
+		/* Set env before dropping privileges to avoid surprises */
+		if (setenv("HOME", pw.pw_dir ? pw.pw_dir : "", 1) != 0 ||
+		    setenv("SHELL", pw.pw_shell ? pw.pw_shell : "/bin/sh", 1) != 0 ||
+		    setenv("USER", pw.pw_name ? pw.pw_name : "", 1) != 0 ||
+		    setenv("LOGNAME", pw.pw_name ? pw.pw_name : "", 1) != 0) {
+			fprintf(stderr, "Warning: Failed to set user environment variables\n");
+		}
 	}
-	/* apply env file (if provided via --env-file) before dropping privs */
+
+	/* Apply env file (if provided via --env-file) before dropping privs */
 	if (g_env_file && *g_env_file)
 		apply_env_file(g_env_file);
-	if (!is_numeric && res && initgroups(pw.pw_name, gid) != 0)
+
+	/* Initialize supplementary groups for named users */
+	if (!is_numeric && res && initgroups(pw.pw_name, gid) != 0) {
+		fprintf(stderr, "Failed to initialize groups for user '%s': %s\n",
+			pw.pw_name, strerror(errno));
 		return -1;
-	if (setgid(gid) != 0)
+	}
+
+	if (setgid(gid) != 0) {
+		fprintf(stderr, "Failed to set gid %u: %s\n", gid, strerror(errno));
 		return -1;
-	if (setuid(uid) != 0)
+	}
+
+	if (setuid(uid) != 0) {
+		fprintf(stderr, "Failed to set uid %u: %s\n", uid, strerror(errno));
 		return -1;
+	}
+
 	return 0;
 }
 

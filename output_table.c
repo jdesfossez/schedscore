@@ -32,49 +32,108 @@ const char *col_name[COL__COUNT] = {
 
 
 
-void compute_pid_table_widths(struct schedscore_bpf *skel, const struct col_set *cs, int *widths)
+void compute_pid_table_widths(struct schedscore_bpf *skel, const struct col_set *cs,
+			      int *widths)
 {
-	int fd = bpf_map__fd(skel->maps.stats);
-	__u32 key = 0, next = 0; int err;
+	int fd, err, ret;
+	__u32 key = 0, next = 0;
 	struct schedscore_pid_stats val;
 	char buf[64];
-	for (int i = 0; i < cs->cnt; i++) {
-		/* Initialize widths to header label length for id group only; others from data. */
-		int id = cs->idx[i];
+	double p50, p95, p99, avg_lat, avg_on;
+	double p50_on, p95_on, p99_on;
+	int i, id, l;
+
+	if (!skel || !cs || !widths) {
+		fprintf(stderr, "Invalid arguments to compute_pid_table_widths\n");
+		return;
+	}
+
+	fd = bpf_map__fd(skel->maps.stats);
+	if (fd < 0) {
+		fprintf(stderr, "Failed to get stats map fd\n");
+		return;
+	}
+
+	/* Initialize widths to header label length for ID columns */
+	for (i = 0; i < cs->cnt; i++) {
+		id = cs->idx[i];
 		if (id == COL_PID || id == COL_COMM || id == COL_PARAMSET_ID)
 			widths[i] = (int)strlen(col_name[id]);
 		else
 			widths[i] = 0;
 	}
+
 	while ((err = bpf_map_get_next_key(fd, &key, &next)) == 0) {
-		if (bpf_map_lookup_elem(fd, &next, &val) == 0) {
-			double p50 = 0, p95 = 0, p99 = 0, avg_lat = 0, avg_on = 0;
-			compute_metrics(val.lat_hist, val.wake_lat_sum_ns, val.wake_lat_cnt,
-					val.runtime_ns, val.nr_periods,
-					&p50, &p95, &p99, &avg_lat, &avg_on);
-			double p50_on = 0, p95_on = 0, p99_on = 0;
-			compute_oncpu_quantiles(val.on_hist, &p50_on, &p95_on, &p99_on);
-			for (int i = 0; i < cs->cnt; i++) {
-				int id = cs->idx[i];
-				int l = 0;
-				switch (id) {
-				case COL_PID: snprintf(buf, sizeof buf, "%u", next); l = strlen(buf); break;
-				case COL_COMM: l = TASK_COMM_LEN; break;
-				case COL_PARAMSET_ID: snprintf(buf, sizeof buf, "%u", val.last_paramset_id); l = strlen(buf); break;
-				case COL_P50_LAT: snprintf(buf, sizeof buf, "%.0f", p50); l = strlen(buf); break;
-				case COL_AVG_LAT: snprintf(buf, sizeof buf, "%.0f", avg_lat); l = strlen(buf); break;
-				case COL_P95_LAT: snprintf(buf, sizeof buf, "%.0f", p95); l = strlen(buf); break;
-				case COL_P99_LAT: snprintf(buf, sizeof buf, "%.0f", p99); l = strlen(buf); break;
-				case COL_P50_ON: snprintf(buf, sizeof buf, "%.0f", p50_on); l = strlen(buf); break;
-				case COL_AVG_ON: snprintf(buf, sizeof buf, "%.0f", avg_on); l = strlen(buf); break;
-				case COL_P95_ON: snprintf(buf, sizeof buf, "%.0f", p95_on); l = strlen(buf); break;
-				case COL_P99_ON: snprintf(buf, sizeof buf, "%.0f", p99_on); l = strlen(buf); break;
-				case COL_NR_PERIODS: snprintf(buf, sizeof buf, "%u", val.nr_periods); l = strlen(buf); break;
-				default: l = 0; break;
-				}
-				if (l > widths[i])
-					widths[i] = l;
+		if (bpf_map_lookup_elem(fd, &next, &val) != 0)
+			continue;
+
+		p50 = p95 = p99 = avg_lat = avg_on = 0;
+		compute_metrics(val.lat_hist, val.wake_lat_sum_ns, val.wake_lat_cnt,
+				val.runtime_ns, val.nr_periods,
+				&p50, &p95, &p99, &avg_lat, &avg_on);
+
+		p50_on = p95_on = p99_on = 0;
+		compute_oncpu_quantiles(val.on_hist, &p50_on, &p95_on, &p99_on);
+
+		for (i = 0; i < cs->cnt; i++) {
+			id = cs->idx[i];
+			l = 0;
+
+			switch (id) {
+			case COL_PID:
+				ret = snprintf(buf, sizeof(buf), "%u", next);
+				l = (ret > 0) ? ret : 0;
+				break;
+			case COL_COMM:
+				l = TASK_COMM_LEN;
+				break;
+			case COL_PARAMSET_ID:
+				ret = snprintf(buf, sizeof(buf), "%u", val.last_paramset_id);
+				l = (ret > 0) ? ret : 0;
+				break;
+			case COL_P50_LAT:
+				ret = snprintf(buf, sizeof(buf), "%.0f", p50);
+				l = (ret > 0) ? ret : 0;
+				break;
+			case COL_AVG_LAT:
+				ret = snprintf(buf, sizeof(buf), "%.0f", avg_lat);
+				l = (ret > 0) ? ret : 0;
+				break;
+			case COL_P95_LAT:
+				ret = snprintf(buf, sizeof(buf), "%.0f", p95);
+				l = (ret > 0) ? ret : 0;
+				break;
+			case COL_P99_LAT:
+				ret = snprintf(buf, sizeof(buf), "%.0f", p99);
+				l = (ret > 0) ? ret : 0;
+				break;
+			case COL_P50_ON:
+				ret = snprintf(buf, sizeof(buf), "%.0f", p50_on);
+				l = (ret > 0) ? ret : 0;
+				break;
+			case COL_AVG_ON:
+				ret = snprintf(buf, sizeof(buf), "%.0f", avg_on);
+				l = (ret > 0) ? ret : 0;
+				break;
+			case COL_P95_ON:
+				ret = snprintf(buf, sizeof(buf), "%.0f", p95_on);
+				l = (ret > 0) ? ret : 0;
+				break;
+			case COL_P99_ON:
+				ret = snprintf(buf, sizeof(buf), "%.0f", p99_on);
+				l = (ret > 0) ? ret : 0;
+				break;
+			case COL_NR_PERIODS:
+				ret = snprintf(buf, sizeof(buf), "%u", val.nr_periods);
+				l = (ret > 0) ? ret : 0;
+				break;
+			default:
+				l = 0;
+				break;
 			}
+
+			if (l > widths[i])
+				widths[i] = l;
 		}
 		key = next;
 	}

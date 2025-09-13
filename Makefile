@@ -197,13 +197,17 @@ test: all $(TEST_SCRIPT)
 
 # ---- Unit tests for output formatters (snapshot-based, no libbpf)
 .PHONY: unit-test
-UNIT_TESTS := tests/test_output_table tests/test_output_csv tests/test_output_json
+UNIT_TESTS := tests/test_output_table tests/test_output_csv tests/test_output_json tests/test_migration_matrix tests/test_opts_parsing
 
 unit-test: $(UNIT_TESTS)
 	@for t in $(UNIT_TESTS); do echo "RUN $$t"; ./$$t; done
 
 # simple build rule
 tests/%: tests/%.c output_common.o
+	$(CC) $(CFLAGS) -I. $^ -o $@
+
+# special rule for opts parsing test
+tests/test_opts_parsing: tests/test_opts_parsing.c opts_parse.o
 	$(CC) $(CFLAGS) -I. $^ -o $@
 
 	@bash $(TEST_SCRIPT)

@@ -81,6 +81,7 @@ static void print_help_aligned(const char *prog)
 	printf("  --show-hist-config            print histogram config and exit\n");
 	printf("  --show-migration-matrix       include paramset migration matrix\n");
 	printf("  --show-pid-migration-matrix   include per-PID migration matrix\n");
+	printf("  --paramset-recheck            force paramset recheck on every event\n");
 	printf("  --detect-wakeup-latency VAL   set wakeup detector (e.g. 1us, 1ms)\n");
 	printf("  --detect-migration-xnuma      enable cross-NUMA migration detector\n");
 	printf("  --detect-migration-xllc       enable cross-LLC migration detector\n");

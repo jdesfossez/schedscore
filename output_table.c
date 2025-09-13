@@ -395,18 +395,26 @@ void dump_migrations_summary_table(struct schedscore_bpf *skel)
 	}
 	int idw = (int)strlen("paramset_id"); if (w_id < idw) w_id = idw;
 	int totw = (int)strlen("total"); if (w_tot < totw) w_tot = totw;
+	int totalsw = (int)strlen("totals"); if (w_tot < totalsw) w_tot = totalsw;
 	int rww = (int)strlen("wakeup"); if (w_rw < rww) w_rw = rww;
 	int lbw = (int)strlen("lb");     if (w_lb < lbw) w_lb = lbw;
 	int nw  = (int)strlen("numa");   if (w_n  < nw)  w_n  = nw;
-	int locw = 5; /* width for locality labels */
-	int loc_block = locw+1+locw+1+locw+1+locw+1+locw;
+	/* Ensure minimum widths for locality labels */
+	int smtw = (int)strlen("smt");   if (w_smt < smtw) w_smt = smtw;
+	int l2w  = (int)strlen("l2");    if (w_l2 < l2w) w_l2 = l2w;
+	int llcw = (int)strlen("llc");   if (w_llc < llcw) w_llc = llcw;
+	int xllcw = (int)strlen("xllc"); if (w_xllc < xllcw) w_xllc = xllcw;
+	int xnumaw = (int)strlen("xnuma"); if (w_xnuma < xnumaw) w_xnuma = xnumaw;
+	int locw = 5; /* width for empty columns in by_reason section */
+	int loc_block = w_smt+1+w_l2+1+w_llc+1+w_xllc+1+w_xnuma;
+	int reason_block = w_rw+1+w_lb+1+w_n+1+locw+1+locw;
 	printf("%-*s | %-*s | %-*s | %-*s\n",
-		w_id, "id", (w_tot+w_rw+w_lb+w_n+3), "totals", loc_block, "by_reason", loc_block, "by_locality");
-	printf("%-*s | %-*s %-*s %-*s %-*s | %-*s %-*s %-*s %-*s %-*s | %-*s %-*s %-*s %-*s %-*s\n",
+		w_id, "id", w_tot, "totals", reason_block, "by_reason", loc_block, "by_locality");
+	printf("%-*s | %-*s | %-*s %-*s %-*s %-*s %-*s | %-*s %-*s %-*s %-*s %-*s\n",
 		w_id, "paramset_id",
-		w_tot, "total", w_rw, "wakeup", w_lb, "lb", w_n, "numa",
-		locw, "wakeup", locw, "lb", locw, "numa", locw, "", locw, "",
-		locw, "smt", locw, "l2", locw, "llc", locw, "xllc", locw, "xnuma");
+		w_tot, "total",
+		w_rw, "wakeup", w_lb, "lb", w_n, "numa", locw, "", locw, "",
+		w_smt, "smt", w_l2, "l2", w_llc, "llc", w_xllc, "xllc", w_xnuma, "xnuma");
 	key = next = 0;
 	while ((err = bpf_map_get_next_key(stats_fd, &key, &next)) == 0) {
 		struct schedscore_paramset_stats st;
@@ -420,11 +428,11 @@ void dump_migrations_summary_table(struct schedscore_bpf *skel)
 			l_llc  = st.migr_grid[SC_MR_WAKEUP][SC_ML_LLC]  + st.migr_grid[SC_MR_LB][SC_ML_LLC]  + st.migr_grid[SC_MR_NUMA][SC_ML_LLC];
 			l_xllc = st.migr_grid[SC_MR_WAKEUP][SC_ML_XLLC] + st.migr_grid[SC_MR_LB][SC_ML_XLLC] + st.migr_grid[SC_MR_NUMA][SC_ML_XLLC];
 			l_xnuma= st.migr_grid[SC_MR_WAKEUP][SC_ML_XNUMA]+ st.migr_grid[SC_MR_LB][SC_ML_XNUMA]+ st.migr_grid[SC_MR_NUMA][SC_ML_XNUMA];
-			printf("%-*u | %-*llu %-*llu %-*llu %-*llu | %*s %*s %*s %*s %*s | %-*llu %-*llu %-*llu %-*llu %-*llu\n",
+			printf("%-*u | %-*llu | %-*llu %-*llu %-*llu %*s %*s | %-*llu %-*llu %-*llu %-*llu %-*llu\n",
 				w_id, next,
-				w_tot, (r_w+r_lb+r_n), w_rw, r_w, w_lb, r_lb, w_n, r_n,
-				5, "", 5, "", 5, "", 5, "", 5, "",
-				5, l_smt, 5, l2, 5, l_llc, 5, l_xllc, 5, l_xnuma);
+				w_tot, (r_w+r_lb+r_n),
+				w_rw, r_w, w_lb, r_lb, w_n, r_n, locw, "", locw, "",
+				w_smt, l_smt, w_l2, l2, w_llc, l_llc, w_xllc, l_xllc, w_xnuma, l_xnuma);
 		}
 		key = next;
 	}

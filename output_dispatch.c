@@ -211,7 +211,8 @@ static int dump_output(struct schedscore_bpf *skel, const struct opts *o)
         dump_migrations_csv(skel, o->show_migration_matrix);
     } else if (strcmp(fmt, "table") == 0) {
         /* Per-PID matrix comes immediately after the per-PID main table */
-        dump_pid_migrations_matrix_table(skel);
+        if (o->show_pid_migration_matrix)
+            dump_pid_migrations_matrix_table(skel);
 
         /* Paramset map and stats */
         dump_paramset_map_table(skel, true);

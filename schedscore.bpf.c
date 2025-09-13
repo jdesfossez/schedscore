@@ -149,13 +149,22 @@ struct {
 	__type(value, struct next_id_state);
 } next_paramset_id SEC(".maps");
 
-static __always_inline void read_mask64(const unsigned long *bits, __u64 out[4], __u16 *weight)
+static __always_inline void read_mask64(const unsigned long *bits, __u64 out[4],
+					 __u16 *weight)
 {
 	__u64 w = 0;
-	#pragma clang loop unroll(full)
+	int ret;
+
+	if (!bits || !out || !weight)
+		return;
+
+#pragma clang loop unroll(full)
 	for (int i = 0; i < 4; i++) {
 		__u64 v = 0;
-		bpf_core_read(&v, sizeof(v), &(((__u64 *)bits)[i]));
+
+		ret = bpf_core_read(&v, sizeof(v), &(((__u64 *)bits)[i]));
+		if (ret < 0)
+			v = 0;
 		out[i] = v;
 		w += (__u64)__builtin_popcountll(v);
 	}
@@ -164,73 +173,160 @@ static __always_inline void read_mask64(const unsigned long *bits, __u64 out[4],
 
 static __always_inline void add_latency_bucket(__u32 *hist, __u64 ns)
 {
-	/* Linear, power-of-two bucket: idx = min(ns >> LAT_WIDTH_SHIFT, LAT_BUCKETS-1) */
-	__u64 idx = ns >> LAT_WIDTH_SHIFT;
+	__u64 idx;
+
+	if (!hist)
+		return;
+
+	/*
+	 * Linear, power-of-two bucket:
+	 * idx = min(ns >> LAT_WIDTH_SHIFT, LAT_BUCKETS-1)
+	 */
+	idx = ns >> LAT_WIDTH_SHIFT;
 	if (idx >= LAT_BUCKETS)
 		idx = LAT_BUCKETS - 1;
+
 	__atomic_fetch_add(&hist[idx], 1, __ATOMIC_RELAXED);
 }
 
 static __always_inline void add_oncpu_bucket(__u32 *hist, __u64 ns)
 {
-	/* Linear, power-of-two bucket: idx = min(ns >> ON_WIDTH_SHIFT, ON_BUCKETS-1) */
-	__u64 idx = ns >> ON_WIDTH_SHIFT;
+	__u64 idx;
+
+	if (!hist)
+		return;
+
+	/*
+	 * Linear, power-of-two bucket:
+	 * idx = min(ns >> ON_WIDTH_SHIFT, ON_BUCKETS-1)
+	 */
+	idx = ns >> ON_WIDTH_SHIFT;
 	if (idx >= ON_BUCKETS)
 		idx = ON_BUCKETS - 1;
+
 	__atomic_fetch_add(&hist[idx], 1, __ATOMIC_RELAXED);
 }
 
-static __always_inline void build_paramset_key(struct task_struct *t, struct schedscore_paramset_key *k)
+static __always_inline void build_paramset_key(struct task_struct *t,
+						struct schedscore_paramset_key *k)
 {
-	__builtin_memset(k, 0, sizeof(*k));
-	bpf_core_read(&k->policy, sizeof(k->policy), &t->policy);
-	/* derive nice from static_prio: Linux nice = static_prio - 120 */
-	{
-		__u32 static_prio = 0;
-		bpf_core_read(&static_prio, sizeof(static_prio), &t->static_prio);
-		k->nice = (__s8)((int)static_prio - 120);
-	}
-	bpf_core_read(&k->rtprio, sizeof(k->rtprio), &t->rt_priority);
-	/* deadline params */
-	{
-		struct sched_dl_entity dl = {};
-		bpf_core_read(&dl, sizeof(dl), &t->dl);
-		k->dl_runtime  = dl.runtime;
-		k->dl_deadline = dl.deadline;
-		k->dl_period   = dl.dl_period;
-		/* k->dl_period name can differ across kernels (dl_period vs period); we read dl_period */
+	struct sched_dl_entity dl = {};
+	__u32 static_prio = 0;
+	int ret;
 
+	if (!t || !k)
+		return;
+
+	__builtin_memset(k, 0, sizeof(*k));
+
+	/* Read scheduling policy */
+	ret = bpf_core_read(&k->policy, sizeof(k->policy), &t->policy);
+	if (ret < 0)
+		k->policy = 0;
+
+	/* Derive nice from static_prio: Linux nice = static_prio - 120 */
+	ret = bpf_core_read(&static_prio, sizeof(static_prio), &t->static_prio);
+	if (ret < 0)
+		static_prio = 120; /* Default to nice 0 */
+	k->nice = (__s8)((int)static_prio - 120);
+
+	/* Read RT priority */
+	ret = bpf_core_read(&k->rtprio, sizeof(k->rtprio), &t->rt_priority);
+	if (ret < 0)
+		k->rtprio = 0;
+
+	/* Read deadline scheduling parameters */
+	ret = bpf_core_read(&dl, sizeof(dl), &t->dl);
+	if (ret < 0) {
+		k->dl_runtime = 0;
+		k->dl_deadline = 0;
+		k->dl_period = 0;
+	} else {
+		k->dl_runtime = dl.runtime;
+		k->dl_deadline = dl.deadline;
+		k->dl_period = dl.dl_period;
+		/*
+		 * Note: dl_period name can differ across kernels
+		 * (dl_period vs period); we read dl_period
+		 */
 	}
-	/* uclamp if present */
-	struct uclamp_se ucmin = {}, ucmax = {};
-	bpf_core_read(&ucmin, sizeof(ucmin), &t->uclamp_req[0]);
-	bpf_core_read(&ucmax, sizeof(ucmax), &t->uclamp_req[1]);
-	k->uclamp_min = ucmin.value;
-	k->uclamp_max = ucmax.value;
-	/* cgroup v2 id */
+	/* Read uclamp values if present */
+	{
+		struct uclamp_se ucmin = {}, ucmax = {};
+
+		ret = bpf_core_read(&ucmin, sizeof(ucmin), &t->uclamp_req[0]);
+		if (ret < 0)
+			k->uclamp_min = 0;
+		else
+			k->uclamp_min = ucmin.value;
+
+		ret = bpf_core_read(&ucmax, sizeof(ucmax), &t->uclamp_req[1]);
+		if (ret < 0)
+			k->uclamp_max = 1024; /* Default max */
+		else
+			k->uclamp_max = ucmax.value;
+	}
+
+	/* Read cgroup v2 id */
 	{
 		struct css_set *c = NULL;
 		struct cgroup_subsys_state *dfl_css = NULL;
 		struct cgroup *cg = NULL;
 		struct kernfs_node *kn = NULL;
-		bpf_core_read(&c, sizeof(c), &t->cgroups);
-		bpf_core_read(&dfl_css, sizeof(dfl_css), &c->dfl_cgrp);
-		bpf_core_read(&cg, sizeof(cg), &dfl_css->cgroup);
-		bpf_core_read(&kn, sizeof(kn), &cg->kn);
-		bpf_core_read(&k->cgroup_id, sizeof(k->cgroup_id), &kn->id);
+
+		ret = bpf_core_read(&c, sizeof(c), &t->cgroups);
+		if (ret < 0)
+			goto skip_cgroup;
+
+		ret = bpf_core_read(&dfl_css, sizeof(dfl_css), &c->dfl_cgrp);
+		if (ret < 0)
+			goto skip_cgroup;
+
+		ret = bpf_core_read(&cg, sizeof(cg), &dfl_css->cgroup);
+		if (ret < 0)
+			goto skip_cgroup;
+
+		ret = bpf_core_read(&kn, sizeof(kn), &cg->kn);
+		if (ret < 0)
+			goto skip_cgroup;
+
+		ret = bpf_core_read(&k->cgroup_id, sizeof(k->cgroup_id), &kn->id);
+		if (ret < 0)
+			k->cgroup_id = 0;
+		goto read_masks;
+
+skip_cgroup:
+		k->cgroup_id = 0;
 	}
-	/* masks */
+read_masks:
+	/* Read CPU and memory masks */
 	{
 		const struct cpumask *cp = NULL;
-		bpf_core_read(&cp, sizeof(cp), &t->cpus_ptr);
-		if (cp)
-			read_mask64((const unsigned long *)cp->bits, k->cpus_mask, &k->cpus_weight);
+
+		ret = bpf_core_read(&cp, sizeof(cp), &t->cpus_ptr);
+		if (ret < 0 || !cp) {
+			/* Set default mask values on error */
+			for (int i = 0; i < 4; i++)
+				k->cpus_mask[i] = 0;
+			k->cpus_weight = 0;
+		} else {
+			read_mask64((const unsigned long *)cp->bits,
+				    k->cpus_mask, &k->cpus_weight);
+		}
 	}
 	{
 		const nodemask_t *nm = NULL;
-		bpf_core_read(&nm, sizeof(nm), &t->mems_allowed);
-		if (nm)
-			read_mask64((const unsigned long *)nm->bits, k->mems_mask, &k->mems_weight);
+
+		ret = bpf_core_read(&nm, sizeof(nm), &t->mems_allowed);
+		if (ret < 0 || !nm) {
+			/* Set default mask values on error */
+			for (int i = 0; i < 4; i++)
+				k->mems_mask[i] = 0;
+			k->mems_weight = 0;
+		} else {
+			read_mask64((const unsigned long *)nm->bits,
+				    k->mems_mask, &k->mems_weight);
+		}
 	}
 }
 
@@ -308,47 +404,69 @@ static __always_inline struct schedscore_pid_stats *get_or_init_pid_stats(__u32 
 }
 
 static __always_inline void handle_wake_latency(const struct config *cfg,
-					     __u32 pid, __u64 ts, __u32 id,
-					     struct task_struct *task,
-					     struct schedscore_pid_stats *ps)
+						__u32 pid, __u64 ts, __u32 id,
+						struct task_struct *task,
+						struct schedscore_pid_stats *ps)
 {
-	__u64 *wts = bpf_map_lookup_elem(&wake_ts, &pid);
-	if (!(wts && *wts))
+	__u64 *wts;
+	__u64 lat;
+	int ret;
+
+	if (!ps || !task)
 		return;
 
-	__u64 lat = ts - *wts;
-	/* snapshot comm after possible exec */
-	bpf_core_read_str(ps->comm, sizeof(ps->comm), &task->comm);
+	wts = bpf_map_lookup_elem(&wake_ts, &pid);
+	if (!wts || !*wts)
+		return;
+
+	lat = ts - *wts;
+
+	/* Snapshot comm after possible exec */
+	ret = bpf_core_read_str(ps->comm, sizeof(ps->comm), &task->comm);
+	if (ret < 0) {
+		/* On error, keep the existing comm */
+	}
+
 	ps->wake_lat_sum_ns += lat;
 	ps->wake_lat_cnt++;
 	add_latency_bucket(ps->lat_hist, lat);
+
 	if (cfg && cfg->aggregate_enable && id)
 		mirror_latency_to_paramset(id, lat);
-	if (cfg && cfg->enable_warn && cfg->latency_warn_ns && lat > cfg->latency_warn_ns)
-		bpf_printk("schedscore: pid=%d wake_lat_ns=%llu > thr_ns=%llu", pid, lat, cfg->latency_warn_ns);
-	/* detector: wakeup latency */
-	if (cfg && cfg->detect_wakeup_lat_ns && lat > cfg->detect_wakeup_lat_ns) {
-		bpf_printk("schedscore:detect_wakeup_latency: pid=%d latency=%llu", pid, lat);
-	}
-			/* using last_cpu for waker is a good proxy; sched_waking stored waker_cpu as well if needed */
 
+	if (cfg && cfg->enable_warn && cfg->latency_warn_ns &&
+	    lat > cfg->latency_warn_ns)
+		bpf_printk("schedscore: pid=%d wake_lat_ns=%llu > thr_ns=%llu",
+			   pid, lat, cfg->latency_warn_ns);
+
+	/* Detector: wakeup latency */
+	if (cfg && cfg->detect_wakeup_lat_ns && lat > cfg->detect_wakeup_lat_ns)
+		bpf_printk("schedscore:detect_wakeup_latency: pid=%d latency=%llu",
+			   pid, lat);
 
 	*wts = 0;
 }
 
 static __always_inline void end_period_for_prev(const struct config *cfg,
-					    struct task_struct *prev,
-					    __u64 ts)
+						 struct task_struct *prev,
+						 __u64 ts)
 {
+	struct schedscore_pid_stats *pps;
+	__u32 ppid;
+	__u64 delta;
+
 	if (!prev)
 		return;
 
-	__u32 ppid = BPF_CORE_READ(prev, pid);
-	struct schedscore_pid_stats *pps = bpf_map_lookup_elem(&stats, &ppid);
-	if (!(pps && pps->oncpu_start_ns))
+	ppid = BPF_CORE_READ(prev, pid);
+	if (!ppid)
 		return;
 
-	__u64 delta = ts - pps->oncpu_start_ns;
+	pps = bpf_map_lookup_elem(&stats, &ppid);
+	if (!pps || !pps->oncpu_start_ns)
+		return;
+
+	delta = ts - pps->oncpu_start_ns;
 	pps->runtime_ns += delta;
 	add_oncpu_bucket(pps->on_hist, delta);
 	pps->nr_periods++;
@@ -434,49 +552,74 @@ static __always_inline bool follow_children_enabled(void)
 
 static __always_inline bool pass_filters(struct task_struct *task, __u32 pid)
 {
+	struct config *cfg;
 	__u32 k0 = 0;
-	struct config *cfg = bpf_map_lookup_elem(&conf, &k0);
-	if (!cfg) return true;
+	int ret;
+
+	if (!task || !pid)
+		return false;
+
+	cfg = bpf_map_lookup_elem(&conf, &k0);
+	if (!cfg)
+		return true;
 
 	if (cfg->use_pid_filter) {
 		__u8 *ok = bpf_map_lookup_elem(&pid_filter, &pid);
-		if (ok) return true;
-		/* fall through to check others */
+		if (ok)
+			return true;
+		/* Fall through to check other filters */
 	}
+
 	if (cfg->use_comm_filter) {
 		struct comm_key ck = {};
-		bpf_core_read_str(ck.comm, sizeof(ck.comm), &task->comm);
-		__u8 *ok = bpf_map_lookup_elem(&comm_filter, &ck);
-		if (ok) return true;
+
+		ret = bpf_core_read_str(ck.comm, sizeof(ck.comm), &task->comm);
+		if (ret > 0) {
+			__u8 *ok = bpf_map_lookup_elem(&comm_filter, &ck);
+			if (ok)
+				return true;
+		}
 	}
+
 	if (cfg->use_cgrp_filter) {
 		__u64 cgid = bpf_get_current_cgroup_id();
 		__u8 *ok = bpf_map_lookup_elem(&cgrp_filter, &cgid);
-		if (ok) return true;
+		if (ok)
+			return true;
 	}
 
-	/* if any filter is enabled and none matched -> reject;
+	/*
+	 * If any filter is enabled and none matched -> reject;
 	 * if no filters enabled -> accept.
 	 */
 	if (cfg->use_pid_filter || cfg->use_comm_filter || cfg->use_cgrp_filter)
 		return false;
+
 	return true;
 }
 
-static __always_inline bool track_if_passing_filters(struct task_struct *task, __u32 pid)
+static __always_inline bool track_if_passing_filters(struct task_struct *task,
+						      __u32 pid)
 {
+	__u32 ppid, leader;
+
+	if (!task || !pid)
+		return false;
+
 	if (is_tracked(pid))
 		return true;
+
 	/* If follow is enabled, inherit tracking from parent or group leader */
 	if (follow_children_enabled()) {
-		__u32 ppid = BPF_CORE_READ(task, real_parent, pid);
-		if (is_tracked(ppid)) {
+		ppid = BPF_CORE_READ(task, real_parent, pid);
+		if (ppid && is_tracked(ppid)) {
 			mark_tracked(pid);
 			return true;
 		}
+
 		/* Also follow threads in same thread-group when leader is tracked */
-		__u32 leader = BPF_CORE_READ(task, group_leader, pid);
-		if (is_tracked(leader)) {
+		leader = BPF_CORE_READ(task, group_leader, pid);
+		if (leader && is_tracked(leader)) {
 			mark_tracked(pid);
 			return true;
 		}
@@ -615,39 +758,69 @@ int BPF_PROG(sched_switch, bool preempt, struct task_struct *prev, struct task_s
 
 static __always_inline int classify_loc(__u32 from_cpu, __u32 to_cpu)
 {
+	__u32 *from_core, *to_core;
+	__u32 *from_l2, *to_l2;
+	__u32 *from_llc, *to_llc;
+	__u32 *from_numa, *to_numa;
+
 	if (from_cpu == to_cpu)
-		return SC_ML_CORE; /* degenerate */
-	__u32 *from_core = bpf_map_lookup_elem(&cpu_core_id, &from_cpu);
-	__u32 *to_core = bpf_map_lookup_elem(&cpu_core_id, &to_cpu);
+		return SC_ML_CORE; /* Degenerate case */
+
+	/* Check SMT (same core) */
+	from_core = bpf_map_lookup_elem(&cpu_core_id, &from_cpu);
+	to_core = bpf_map_lookup_elem(&cpu_core_id, &to_cpu);
 	if (from_core && to_core && *from_core == *to_core)
-		return SC_ML_CORE; /* smt */
-	__u32 *from_l2 = bpf_map_lookup_elem(&cpu_l2_id, &from_cpu);
-	__u32 *to_l2 = bpf_map_lookup_elem(&cpu_l2_id, &to_cpu);
+		return SC_ML_CORE; /* SMT migration */
+
+	/* Check L2 cache domain */
+	from_l2 = bpf_map_lookup_elem(&cpu_l2_id, &from_cpu);
+	to_l2 = bpf_map_lookup_elem(&cpu_l2_id, &to_cpu);
 	if (from_l2 && to_l2 && *from_l2 == *to_l2)
 		return SC_ML_L2;
-	__u32 *from_llc = bpf_map_lookup_elem(&cpu_llc_id, &from_cpu);
-	__u32 *to_llc = bpf_map_lookup_elem(&cpu_llc_id, &to_cpu);
+
+	/* Check LLC (Last Level Cache) domain */
+	from_llc = bpf_map_lookup_elem(&cpu_llc_id, &from_cpu);
+	to_llc = bpf_map_lookup_elem(&cpu_llc_id, &to_cpu);
 	if (from_llc && to_llc && *from_llc == *to_llc)
 		return SC_ML_LLC;
-	__u32 *from_numa = bpf_map_lookup_elem(&cpu_numa_id, &from_cpu);
-	__u32 *to_numa = bpf_map_lookup_elem(&cpu_numa_id, &to_cpu);
+
+	/* Check NUMA domain */
+	from_numa = bpf_map_lookup_elem(&cpu_numa_id, &from_cpu);
+	to_numa = bpf_map_lookup_elem(&cpu_numa_id, &to_cpu);
 	if (from_numa && to_numa && *from_numa != *to_numa)
-		return SC_ML_XNUMA;
+		return SC_ML_XNUMA; /* Cross-NUMA migration */
+
+	/* Default: cross-LLC but same NUMA */
 	return SC_ML_XLLC;
 }
 
-static __always_inline void bump_migration(__u32 pid, int reason, __u32 from_cpu, __u32 to_cpu)
+static __always_inline void bump_migration(__u32 pid, int reason,
+					   __u32 from_cpu, __u32 to_cpu)
 {
-	struct schedscore_pid_stats *ps = bpf_map_lookup_elem(&stats, &pid);
+	struct schedscore_pid_stats *ps;
+	int loc;
+
+	if (!pid)
+		return;
+
+	ps = bpf_map_lookup_elem(&stats, &pid);
 	if (!ps) {
-		__u32 zkey=0; struct schedscore_pid_stats *z = bpf_map_lookup_elem(&zero_pid, &zkey);
-		if (z) bpf_map_update_elem(&stats, &pid, z, BPF_NOEXIST);
+		__u32 zkey = 0;
+		struct schedscore_pid_stats *z;
+
+		z = bpf_map_lookup_elem(&zero_pid, &zkey);
+		if (z)
+			bpf_map_update_elem(&stats, &pid, z, BPF_NOEXIST);
 		ps = bpf_map_lookup_elem(&stats, &pid);
-		if (!ps) return;
+		if (!ps)
+			return;
 	}
-	int loc = classify_loc(from_cpu, to_cpu);
-	if (reason >= 0 && reason < SC_MR__COUNT && loc >= 0 && loc < SC_ML__COUNT)
+
+	loc = classify_loc(from_cpu, to_cpu);
+	if (reason >= 0 && reason < SC_MR__COUNT &&
+	    loc >= 0 && loc < SC_ML__COUNT)
 		__sync_fetch_and_add(&ps->migr_grid[reason][loc], 1);
+
 	ps->last_cpu = to_cpu;
 
 	/* Mirror to paramset aggregate if enabled */
@@ -698,39 +871,61 @@ int BPF_PROG(sched_move_numa, struct task_struct *p, int src_cpu, int dst_cpu)
 }
 
 SEC("tp_btf/sched_swap_numa")
-int BPF_PROG(sched_swap_numa, struct task_struct *src_p, int src_cpu, struct task_struct *dst_p, int dst_cpu)
+int BPF_PROG(sched_swap_numa, struct task_struct *src_p, int src_cpu,
+	     struct task_struct *dst_p, int dst_cpu)
 {
-	__u32 src_pid = BPF_CORE_READ(src_p, pid);
-	if (track_if_passing_filters(src_p, src_pid))
+	__u32 src_pid, dst_pid;
+	struct config *cfg;
+	__u32 k0 = 0;
 
-	/* detector: remote wakeup xNUMA at waking time */
-	{
-		__u32 k0=0; struct config *cfg = bpf_map_lookup_elem(&conf, &k0);
-		if (cfg && cfg->detect_remote_wakeup_xnuma) {
-			/* remote-wakeup detector moved to sched_waking; no-op here */
-		}
+	if (!src_p)
+		return 0;
+
+	src_pid = BPF_CORE_READ(src_p, pid);
+	if (!track_if_passing_filters(src_p, src_pid))
+		return 0;
+
+	/* Detector: remote wakeup xNUMA at waking time */
+	cfg = bpf_map_lookup_elem(&conf, &k0);
+	if (cfg && cfg->detect_remote_wakeup_xnuma) {
+		/* Remote-wakeup detector moved to sched_waking; no-op here */
 	}
 
-		bump_migration(src_pid, SC_MR_NUMA, src_cpu, dst_cpu);
+	bump_migration(src_pid, SC_MR_NUMA, src_cpu, dst_cpu);
+
 	if (dst_p) {
-		__u32 dst_pid = BPF_CORE_READ(dst_p, pid);
+		dst_pid = BPF_CORE_READ(dst_p, pid);
 		if (track_if_passing_filters(dst_p, dst_pid))
 			bump_migration(dst_pid, SC_MR_NUMA, dst_cpu, src_cpu);
 	}
+
 	return 0;
 }
 
-/* augment waking to count wakeup-based migrations */
+/* Augment waking to count wakeup-based migrations */
 SEC("tp_btf/sched_waking")
 int BPF_PROG(sched_waking_mig, struct task_struct *p)
 {
-	__u32 pid = BPF_CORE_READ(p, pid);
+	struct schedscore_pid_stats *ps;
+	__u32 pid, last;
+	int target_cpu;
+
+	if (!p)
+		return 0;
+
+	pid = BPF_CORE_READ(p, pid);
 	if (!track_if_passing_filters(p, pid))
 		return 0;
-	int target_cpu = BPF_CORE_READ(p, wake_cpu);
-	struct schedscore_pid_stats *ps = bpf_map_lookup_elem(&stats, &pid);
-	__u32 last = ps ? ps->last_cpu : target_cpu;
+
+	target_cpu = BPF_CORE_READ(p, wake_cpu);
+	if (target_cpu < 0)
+		return 0;
+
+	ps = bpf_map_lookup_elem(&stats, &pid);
+	last = ps ? ps->last_cpu : (__u32)target_cpu;
+
 	if (last != (__u32)target_cpu)
 		bump_migration(pid, SC_MR_WAKEUP, last, (__u32)target_cpu);
+
 	return 0;
 }

@@ -298,22 +298,34 @@ static pid_t spawn_sidecar(const char *exe, const char *args)
 	}
 
 	if (pid == 0) {
-		/* Child process */
+		/* Child process - create new process group */
+		if (setpgid(0, 0) != 0) {
+			fprintf(stderr, "Failed to create process group: %s\n",
+				strerror(errno));
+			_exit(127);
+		}
+
 		if (args && *args) {
-			len = strlen(exe) + 1 + strlen(args) + 1;
+			/* Add space for "exec " prefix */
+			len = 5 + strlen(exe) + 1 + strlen(args) + 1;
 			cmd = malloc(len);
 			if (!cmd) {
 				fprintf(stderr, "Failed to allocate memory for sidecar command\n");
 				_exit(127);
 			}
 
-			ret = snprintf(cmd, len, "%s %s", exe, args);
+			ret = snprintf(cmd, len, "exec %s %s", exe, args);
 			if (ret >= (int)len) {
 				fprintf(stderr, "Sidecar command too long\n");
 				free(cmd);
 				_exit(127);
 			}
 
+			/*
+			 * Use 'exec' in the shell command so that the final command
+			 * replaces the shell process, eliminating the intermediate
+			 * shell process that could complicate signal handling.
+			 */
 			execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
 			/* If execl returns, preserve errno then free */
 			ret = errno;
@@ -519,27 +531,33 @@ static void stop_process(pid_t pid)
 	if (r == pid)
 		return;
 	if (r < 0 && errno == ECHILD)
-		return; /* not our child or already reaped */
+		return; /* Not our child or already reaped */
 
 	/* If process is not alive, nothing to do */
 	if (kill(pid, 0) != 0 && errno == ESRCH)
 		return;
 
-	(void) kill(pid, SIGINT);
+	/*
+	 * Kill the entire process group to ensure we terminate all children.
+	 * This is crucial for sidecar processes that spawn via shell.
+	 */
+	(void)kill(-pid, SIGINT);
 	for (i = 0; i < 30; i++) {
 		r = waitpid(pid, &st, WNOHANG);
 		if (r == pid)
 			return;
 		usleep(100 * 1000);
 	}
-	(void) kill(pid, SIGTERM);
+
+	(void)kill(-pid, SIGTERM);
 	for (i = 0; i < 20; i++) {
 		r = waitpid(pid, &st, WNOHANG);
 		if (r == pid)
 			return;
 		usleep(100 * 1000);
 	}
-	(void) kill(pid, SIGKILL);
+
+	(void)kill(-pid, SIGKILL);
 
 	/* Final bounded reap */
 	for (i = 0; i < 10; i++) {

@@ -4,8 +4,8 @@
 #include <bpf/bpf_core_read.h>
 #include <bpf/bpf_tracing.h>
 
-#include "schedscore_hist.h"
-#include "schedscore_uapi.h"
+#include "../common/schedscore_hist.h"
+#include "../common/schedscore_uapi.h"
 
 char LICENSE[] SEC("license") = "GPL";
 

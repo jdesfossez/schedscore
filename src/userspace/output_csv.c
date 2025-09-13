@@ -3,9 +3,9 @@
 #include <string.h>
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
-#include "schedscore.skel.h"
-#include "schedscore_hist.h"
-#include "schedscore_uapi.h"
+#include "../bpf/schedscore.skel.h"
+#include "../common/schedscore_hist.h"
+#include "../common/schedscore_uapi.h"
 #include "emit_helpers.h"
 #include "output_csv.h"
 

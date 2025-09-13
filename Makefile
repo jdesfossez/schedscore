@@ -48,14 +48,24 @@ else
   BPFTOOL_BIN   ?= $(shell command -v bpftool 2>/dev/null)
 endif
 
+# ---- Directory structure
+SRCDIR       := src
+USERSPACE_DIR := $(SRCDIR)/userspace
+BPF_DIR      := $(SRCDIR)/bpf
+COMMON_DIR   := $(SRCDIR)/common
+TESTS_DIR    := $(SRCDIR)/tests
+
 # ---- Our sources/outputs
 USERBIN      := schedscore
-USEROBJ      := schedscore.o emit_helpers.o output_table.o output_csv.o output_json.o output_dispatch.o opts_parse.o topo.o
+USEROBJ      := $(USERSPACE_DIR)/schedscore.o $(USERSPACE_DIR)/emit_helpers.o $(USERSPACE_DIR)/output_table.o $(USERSPACE_DIR)/output_csv.o $(USERSPACE_DIR)/output_json.o $(USERSPACE_DIR)/output_dispatch.o $(USERSPACE_DIR)/opts_parse.o $(USERSPACE_DIR)/topo.o
 
-BPF_C        := schedscore.bpf.c
-BPF_O        := schedscore.bpf.o
-BPF_SKEL_H   := schedscore.skel.h
-VMLINUX_H    := vmlinux.h
+BPF_C        := $(BPF_DIR)/schedscore.bpf.c
+BPF_O        := $(BPF_DIR)/schedscore.bpf.o
+BPF_SKEL_H   := $(BPF_DIR)/schedscore.skel.h
+VMLINUX_H    := $(BPF_DIR)/vmlinux.h
+
+# Add include paths for the new structure
+CPPFLAGS     += -I$(COMMON_DIR) -I$(USERSPACE_DIR) -I$(BPF_DIR)
 
 # Default target
 all: deps $(USERBIN)
@@ -90,10 +100,10 @@ $(VMLINUX_H): | deps
 
 # ---- Build BPF object and skeleton
 # Ensure user objects that include the skeleton are built after it exists
-output_table.o: $(BPF_SKEL_H)
-output_csv.o:   $(BPF_SKEL_H)
-output_json.o:  $(BPF_SKEL_H)
-output_dispatch.o: $(BPF_SKEL_H)
+$(USERSPACE_DIR)/output_table.o: $(BPF_SKEL_H)
+$(USERSPACE_DIR)/output_csv.o:   $(BPF_SKEL_H)
+$(USERSPACE_DIR)/output_json.o:  $(BPF_SKEL_H)
+$(USERSPACE_DIR)/output_dispatch.o: $(BPF_SKEL_H)
 
 BPF_CLANG_FLAGS ?= -O2 -g -target bpf -fno-merge-constants
 $(BPF_O): $(BPF_C) $(VMLINUX_H)
@@ -103,22 +113,31 @@ $(BPF_SKEL_H): $(BPF_O) | deps
 	$(BPFTOOL_BIN) gen skeleton $< > $@
 
 # ---- Build userspace
-schedscore.o: schedscore.c $(BPF_SKEL_H)
-		$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
-
-opts_parse.o: opts_parse.c opts_parse.h opts.h
-		$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
-
-topo.o: topo.c topo.h $(BPF_SKEL_H)
+$(USERSPACE_DIR)/schedscore.o: $(USERSPACE_DIR)/schedscore.c $(BPF_SKEL_H)
 	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
 
-output_table.o: output_table.c
+$(USERSPACE_DIR)/opts_parse.o: $(USERSPACE_DIR)/opts_parse.c $(USERSPACE_DIR)/opts_parse.h $(USERSPACE_DIR)/opts.h
 	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
-output_csv.o: output_csv.c
+
+$(USERSPACE_DIR)/topo.o: $(USERSPACE_DIR)/topo.c $(USERSPACE_DIR)/topo.h $(BPF_SKEL_H)
 	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
-output_json.o: output_json.c
+
+$(USERSPACE_DIR)/emit_helpers.o: $(USERSPACE_DIR)/emit_helpers.c $(USERSPACE_DIR)/emit_helpers.h
 	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
-output_dispatch.o: output_dispatch.c
+
+$(USERSPACE_DIR)/output_table.o: $(USERSPACE_DIR)/output_table.c $(USERSPACE_DIR)/output_table.h
+	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
+
+$(USERSPACE_DIR)/output_csv.o: $(USERSPACE_DIR)/output_csv.c $(USERSPACE_DIR)/output_csv.h
+	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
+
+$(USERSPACE_DIR)/output_json.o: $(USERSPACE_DIR)/output_json.c $(USERSPACE_DIR)/output_json.h
+	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
+
+$(USERSPACE_DIR)/output_dispatch.o: $(USERSPACE_DIR)/output_dispatch.c $(USERSPACE_DIR)/output_dispatch.h
+	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
+
+$(USERSPACE_DIR)/output_common.o: $(USERSPACE_DIR)/output_common.c $(USERSPACE_DIR)/output_common.h
 	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
 
 ifeq ($(USE_INTREE),1)
@@ -174,7 +193,7 @@ check-musl:
 		echo "ERROR: pkg-config --static --libs libbpf returned empty. Install static libbpf (e.g., libbpf-static)."; exit 1; \
 	fi
 
-$(USEROBJ_MUSL): schedscore.c $(BPF_SKEL_H)
+$(USEROBJ_MUSL): $(USERSPACE_DIR)/schedscore.c $(BPF_SKEL_H)
 	$(MUSL_CC) $(MUSL_CFLAGS) $(MUSL_CPPFLAGS) -c $< -o $@
 
 $(USERBIN_MUSL): $(USEROBJ_MUSL)
@@ -188,28 +207,28 @@ static: deps $(USERBIN_STATIC)
 # ---- Clean
 clean:
 	$(RM) -f $(USERBIN) $(USEROBJ) $(BPF_O) $(BPF_SKEL_H) $(VMLINUX_H)
+	$(RM) -f $(TESTS_DIR)/test_output_table $(TESTS_DIR)/test_output_csv $(TESTS_DIR)/test_output_json $(TESTS_DIR)/test_migration_matrix $(TESTS_DIR)/test_opts_parsing
 
 # ---- Tests
 .PHONY: test
-TEST_SCRIPT := ./test_schedscore.sh
+TEST_SCRIPT := $(TESTS_DIR)/test_schedscore.sh
 
 test: all $(TEST_SCRIPT)
+	@bash $(TEST_SCRIPT)
 
 # ---- Unit tests for output formatters (snapshot-based, no libbpf)
 .PHONY: unit-test
-UNIT_TESTS := tests/test_output_table tests/test_output_csv tests/test_output_json tests/test_migration_matrix tests/test_opts_parsing
+UNIT_TESTS := $(TESTS_DIR)/test_output_table $(TESTS_DIR)/test_output_csv $(TESTS_DIR)/test_output_json $(TESTS_DIR)/test_migration_matrix $(TESTS_DIR)/test_opts_parsing
 
 unit-test: $(UNIT_TESTS)
 	@for t in $(UNIT_TESTS); do echo "RUN $$t"; ./$$t; done
 
-# simple build rule
-tests/%: tests/%.c output_common.o
-	$(CC) $(CFLAGS) -I. $^ -o $@
+# Build rule for most unit tests
+$(TESTS_DIR)/test_%: $(TESTS_DIR)/test_%.c $(USERSPACE_DIR)/output_common.o
+	$(CC) $(CFLAGS) $(CPPFLAGS) $^ -o $@
 
-# special rule for opts parsing test
-tests/test_opts_parsing: tests/test_opts_parsing.c opts_parse.o
-	$(CC) $(CFLAGS) -I. $^ -o $@
-
-	@bash $(TEST_SCRIPT)
+# Special rule for opts parsing test
+$(TESTS_DIR)/test_opts_parsing: $(TESTS_DIR)/test_opts_parsing.c $(USERSPACE_DIR)/opts_parse.o
+	$(CC) $(CFLAGS) $(CPPFLAGS) $^ -o $@
 
 .PHONY: all clean deps

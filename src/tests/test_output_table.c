@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
-#include "output_common.h"
+#include "../userspace/output_common.h"
 
 int main(void)
 {

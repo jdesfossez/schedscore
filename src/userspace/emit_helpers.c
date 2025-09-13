@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <bpf/bpf.h>
-#include "schedscore_hist.h"
+#include "../common/schedscore_hist.h"
 #include "emit_helpers.h"
 
 /* Convert linear, power-of-two width histograms back to approximate ns quantiles.

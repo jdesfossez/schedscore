@@ -6,7 +6,7 @@
 #include <fcntl.h>
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
-#include "schedscore.skel.h"
+#include "../bpf/schedscore.skel.h"
 #include "topo.h"
 
 static int read_uint_file(const char *path, unsigned int *out)

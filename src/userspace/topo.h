@@ -2,7 +2,7 @@
 #ifndef SCHEDSCORE_TOPO_H
 #define SCHEDSCORE_TOPO_H
 
-#include "schedscore.skel.h"
+#include "../bpf/schedscore.skel.h"
 
 int push_cpu_topology(struct schedscore_bpf *skel);
 void dump_topology_table(struct schedscore_bpf *skel);

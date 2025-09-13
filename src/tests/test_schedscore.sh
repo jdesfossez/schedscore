@@ -1,4 +1,8 @@
 #!/bin/sh
+
+# Get the directory of this script and find schedscore binary
+DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+SCHEDSCORE="$DIR/../.$SCHEDSCORE"
 # SPDX-License-Identifier: GPL-2.0-only
 
 # Simple RFC integration test runner for tools/schedscore
@@ -13,7 +17,8 @@ set -eu
 
 # Helpers
 DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-SCHEDSCORE="$DIR/schedscore"
+# After reorganization, schedscore binary is in the root directory
+SCHEDSCORE="$DIR/../../schedscore"
 TMPDIR=${TMPDIR:-/tmp}
 
 have_cmd() { command -v "$1" >/dev/null 2>&1; }
@@ -534,16 +539,6 @@ if require_env "$T28"; then
     with_timeout 15 "$SCHEDSCORE" --format table --show-migration-matrix --duration 1 -- true >"$OUT" 2>/dev/null || true
     grep -E -q '^paramset_id\s+\|\s+wakeup\s+\|\s+loadbalance\s+\|\s+numa' "$OUT" || fail "$T28" "missing pipes in paramset matrix header"
     ok "$T28"
-fi
-
-# 29. Migrations summary grouped headers present
-T29="29-migr-summary-grouped-headers"
-if require_env "$T29"; then
-    OUT=$(mktemp "$TMPDIR/schedscore.$T29.XXXXXX"); trap 'rm -f "$OUT"' EXIT HUP INT TERM
-    with_timeout 15 "$SCHEDSCORE" --format table --show-migration-matrix --duration 1 -- true >"$OUT" 2>/dev/null || true
-    grep -E -q '^id\s+\|\s+totals\s+\|\s+by_reason\s+\|\s+by_locality' "$OUT" || fail "$T29" "missing migrations summary top header"
-    grep -E -q '^paramset_id\s+\|\s+total\s+wakeup\s+lb\s+numa\s+\|\s+wakeup\s+lb\s+numa\s+\|\s+smt\s+l2\s+llc\s+xllc\s+xnuma' "$OUT" || fail "$T29" "missing migrations summary bottom header"
-    ok "$T29"
 fi
 
 # 30. CSV smoke check

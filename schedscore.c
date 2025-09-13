@@ -327,6 +327,11 @@ static pid_t spawn_sidecar(const char *exe, const char *args)
 		}
 		_exit(127);
 	}
+	/*
+	 * Give a chance to the tracers to be ready before launching the
+	 * BPF tracking.
+	 */
+	usleep(1000 * 1000);
 
 	return pid;
 }
@@ -660,18 +665,9 @@ static int attach_and_launch(struct schedscore_bpf *skel, pid_t target_pid,
 	int perf_started = 0, ftrace_started = 0;
 	(void) target_argv;
 
-	if (schedscore_bpf__attach(skel)) {
-		fprintf(stderr, "failed to attach BPF programs. Ensure BTF and CONFIG_DEBUG_INFO_BTF are enabled.\n");
-		return -1;
-	}
-	if (target_pid > 0) {
-		if (kill(target_pid, SIGCONT) != 0)
-			perror("kill(SIGCONT target)");
-	}
-
 	if (o->perf_enable || o->perf_args) {
 		if (!o->perf_args)
-			o->perf_args = strdup("-a -e sched:* -o perf.data");
+			o->perf_args = strdup("record -a -e sched:* -e bpf_trace:bpf_trace_printk -o perf.data");
 		if (!o->perf_args)
 			goto fail;
 		perf->pid = spawn_sidecar(perf->exe, o->perf_args);
@@ -681,7 +677,7 @@ static int attach_and_launch(struct schedscore_bpf *skel, pid_t target_pid,
 	}
 	if (o->ftrace_enable || o->ftrace_args) {
 		if (!o->ftrace_args)
-			o->ftrace_args = strdup("-e sched -e irq -e softirq -o trace.dat");
+			o->ftrace_args = strdup("record -e sched -e bpf_trace -o trace.dat");
 		if (!o->ftrace_args)
 			goto fail;
 		ftrace->pid = spawn_sidecar(ftrace->exe, o->ftrace_args);
@@ -689,6 +685,15 @@ static int attach_and_launch(struct schedscore_bpf *skel, pid_t target_pid,
 			goto fail;
 		ftrace_started = 1;
 	}
+	if (schedscore_bpf__attach(skel)) {
+		fprintf(stderr, "failed to attach BPF programs. Ensure BTF and CONFIG_DEBUG_INFO_BTF are enabled.\n");
+		return -1;
+	}
+	if (target_pid > 0) {
+		if (kill(target_pid, SIGCONT) != 0)
+			perror("kill(SIGCONT target)");
+	}
+
 	return 0;
 
 fail:
